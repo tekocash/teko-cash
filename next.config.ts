@@ -1,18 +1,21 @@
-// next.config.js
 /** @type {import('next').NextConfig} */
-const withPWA = require("next-pwa")({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-  disable: process.env.NODE_ENV === "development",
-});
-
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-  images: {
-    domains: ['localhost'],
+  experimental: {
+    appDir: true,
   },
+ /* images: {
+    domains: ['tekocash.com'], // Ajusta según tus necesidades
+  }, */
+  // Si necesitas redirecciones
+  async redirects() {
+    return [
+      // Define tus redirecciones aquí si las necesitas
+    ];
+  },
+  // Si usas algún módulo que requiera transpilación especial
+  transpilePackages: [],
 };
 
-module.exports = withPWA(nextConfig);
+module.exports = nextConfig;

@@ -1,4 +1,5 @@
 // src/store/auth-store.ts
+
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User } from '@/lib/supabase/schemas';
@@ -17,6 +18,7 @@ interface AuthState {
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshSession: () => Promise<void>;
+  updateUserProfile: (displayName: string) => Promise<void>; // Nueva función añadida
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -49,20 +51,36 @@ export const useAuthStore = create<AuthState>()(
       signInWithGoogle: async () => {
         try {
           set({ isLoading: true, error: null });
+          
+          // Usar window.location.origin asegura que funcione en desarrollo y producción
+          const redirectUrl = `${window.location.origin}/auth/callback`;
+          console.log('Redirect URL for Google OAuth:', redirectUrl);
+          
           const { data, error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-              redirectTo: `${window.location.origin}/auth/callback`,
+              redirectTo: redirectUrl,
+              queryParams: {
+                prompt: 'select_account' // Para asegurar que siempre muestre el selector
+              }
             },
           });
-          if (error) throw error;
-          // La redirección maneja el resto
+          
+          if (error) {
+            console.error('Error iniciando sesión con Google:', error);
+            throw error;
+          }
+          
+          console.log('OAuth iniciado correctamente');
+          // No necesitamos hacer nada más aquí porque la redirección
+          // la maneja el flujo OAuth automáticamente
         } catch (error: any) {
+          console.error('Error en signInWithGoogle:', error);
           set({ error: error.message, isLoading: false });
           throw error;
         }
       },
-
+      
       signUp: async (email: string, password: string, fullName: string) => {
         try {
           set({ isLoading: true, error: null });
@@ -101,25 +119,109 @@ export const useAuthStore = create<AuthState>()(
       refreshSession: async () => {
         try {
           set({ isLoading: true });
+          console.log('Refrescando sesión...');
           const { data, error } = await supabase.auth.getSession();
-          if (error) throw error;
+          
+          if (error) {
+            console.error('Error obteniendo sesión:', error);
+            throw error;
+          }
+          
+          console.log('Sesión obtenida:', data.session ? 'Sí' : 'No');
+          
           if (data?.session) {
+            // Obtener datos del usuario
             const { data: userData, error: userError } = await supabase
               .from('users')
               .select('*')
               .eq('id', data.session.user.id)
               .single();
-            if (userError) throw userError;
+            
+            if (userError) {
+              console.error('Error obteniendo datos de usuario:', userError);
+              
+              // Si el error es que no existe el usuario, tal vez necesitamos crearlo
+              if (userError.code === 'PGRST116') {
+                console.log('Usuario no encontrado, intentando crear perfil...');
+                
+                // Crear perfil de usuario básico
+                const { error: createError } = await supabase
+                  .from('users')
+                  .insert({
+                    id: data.session.user.id,
+                    email: data.session.user.email,
+                    user_name: data.session.user.email?.split('@')[0] || 'usuario',
+                    display_name: data.session.user.user_metadata?.full_name || 'Usuario',
+                    type: 'standard'
+                  });
+                
+                if (createError) {
+                  console.error('Error creando perfil de usuario:', createError);
+                  throw createError;
+                }
+                
+                // Obtener el usuario recién creado
+                const { data: newUserData, error: newUserError } = await supabase
+                  .from('users')
+                  .select('*')
+                  .eq('id', data.session.user.id)
+                  .single();
+                
+                if (newUserError) throw newUserError;
+                
+                set({
+                  session: data.session,
+                  user: newUserData,
+                  isLoading: false,
+                });
+                
+                return;
+              }
+              
+              throw userError;
+            }
+            
+            console.log('Datos de usuario obtenidos, actualizando estado...');
             set({
               session: data.session,
-              user: userData as User,
+              user: userData,
               isLoading: false,
             });
           } else {
+            console.log('No hay sesión activa');
             set({ session: null, user: null, isLoading: false });
           }
         } catch (error: any) {
+          console.error('Error en refreshSession:', error);
           set({ error: error.message, isLoading: false });
+        }
+      },
+
+      // Nueva función para actualizar el perfil del usuario
+      updateUserProfile: async (displayName: string) => {
+        try {
+          set({ isLoading: true, error: null });
+          const { user } = get();
+          
+          if (!user) throw new Error('Usuario no autenticado');
+          
+          // Actualizar en Supabase
+          const { error } = await supabase
+            .from('users')
+            .update({ display_name: displayName })
+            .eq('id', user.id);
+          
+          if (error) throw error;
+          
+          // Actualizar el estado local
+          set((state) => ({
+            user: state.user ? { ...state.user, display_name: displayName } : null,
+            isLoading: false,
+          }));
+          
+        } catch (error: any) {
+          set({ error: error.message, isLoading: false });
+          throw error;
         }
       },
     }),
