@@ -1,5 +1,4 @@
 'use client';
-
 import { useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
 import Dashboard from '@/components/dashboard/Dashboard';
@@ -9,9 +8,9 @@ export default function DashboardPage() {
 
   // Logging para depuración
   useEffect(() => {
-    console.log("DashboardPage: Cambio en user o session", { 
-      user: !!user, 
-      session: !!session 
+    console.log("DashboardPage: Cambio en user o session", {
+      user: !!user,
+      session: !!session
     });
   }, [user, session]);
 

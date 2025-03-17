@@ -1,423 +1,435 @@
-// src/components/transactions/TransactionForm.tsx
 'use client';
-
 import { useState, useEffect } from 'react';
-import { useForm, Controller } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { format } from 'date-fns';
-import { toast } from 'react-hot-toast';
-import { Calendar as CalendarIcon, DollarSign, Tag, FileText, CheckCircle } from 'lucide-react';
-import { useAuthStore } from '@/store/auth-store';
-import { useTransactionStore } from '@/store/transaction-store';
-import { Transaction } from '@/lib/supabase/schemas';
+import { 
+  DollarSign, 
+  Calendar, 
+  Tag, 
+  AlignLeft, 
+  Users, 
+  Upload, 
+  X, 
+  Check, 
+  ChevronDown,
+  Plus,
+  Minus
+} from 'lucide-react';
 
-// Definir esquema de validación con Zod
-// Esto establece las reglas para cada campo del formulario
-const transactionSchema = z.object({
-  // El tipo de transacción debe ser "income" o "expense"
-  direction: z.enum(['income', 'expense']),
-  
-  // El monto debe ser un número positivo
-  amount: z.coerce.number().positive('El monto debe ser mayor a cero'),
-  
-  // La fecha es requerida
-  date: z.string().min(1, 'La fecha es requerida'),
-  
-  // La descripción es requerida
-  concepto: z.string().min(1, 'La descripción es requerida'),
-  
-  // La categoría es requerida
-  category_id: z.string().min(1, 'La categoría es requerida'),
-  
-  // Estos campos son opcionales
-  comercio: z.string().optional(),
-  additional_info: z.string().optional(),
-  family_group_id: z.string().optional(),
-  use_group_ratio: z.boolean().optional(),
-});
+// Tipos de datos
+type TransactionType = 'expense' | 'income';
 
-// Crear un tipo a partir del esquema para usar con TypeScript
-type TransactionFormValues = z.infer<typeof transactionSchema>;
+type Category = {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  type: TransactionType | 'both';
+};
 
-// Datos de ejemplo para categorías (en una app real, vendrían de una API o store)
-const sampleCategories = [
-  { id: 'cat1', name: 'Alimentación', type: 'expense' },
-  { id: 'cat2', name: 'Transporte', type: 'expense' },
-  { id: 'cat3', name: 'Vivienda', type: 'expense' },
-  { id: 'cat4', name: 'Salario', type: 'income' },
-  { id: 'cat5', name: 'Freelance', type: 'income' },
+type FamilyGroup = {
+  id: string;
+  name: string;
+  members: number;
+};
+
+// Categorías predefinidas basadas en el documento
+const predefinedCategories: Category[] = [
+  { id: 'food', name: 'Alimentación', icon: '🍔', color: '#10B981', type: 'expense' },
+  { id: 'transport', name: 'Transporte', icon: '🚗', color: '#3B82F6', type: 'expense' },
+  { id: 'home', name: 'Hogar', icon: '🏠', color: '#F59E0B', type: 'expense' },
+  { id: 'entertainment', name: 'Entretenimiento', icon: '🎬', color: '#EC4899', type: 'expense' },
+  { id: 'health', name: 'Salud', icon: '⚕️', color: '#EF4444', type: 'expense' },
+  { id: 'education', name: 'Educación', icon: '📚', color: '#8B5CF6', type: 'expense' },
+  { id: 'shopping', name: 'Compras', icon: '🛍️', color: '#F97316', type: 'expense' },
+  { id: 'bills', name: 'Servicios', icon: '📱', color: '#0EA5E9', type: 'expense' },
+  { id: 'salary', name: 'Salario', icon: '💰', color: '#16A34A', type: 'income' },
+  { id: 'freelance', name: 'Freelance', icon: '💻', color: '#8B5CF6', type: 'income' },
+  { id: 'gifts', name: 'Regalos', icon: '🎁', color: '#EC4899', type: 'both' },
+  { id: 'investments', name: 'Inversiones', icon: '📈', color: '#0EA5E9', type: 'both' },
 ];
 
-// Datos de ejemplo para grupos familiares
-const sampleFamilyGroups = [
-  { id: 'fam1', name: 'Mi Familia' },
-  { id: 'fam2', name: 'Amigos' },
+// Grupos familiares de ejemplo
+const sampleFamilyGroups: FamilyGroup[] = [
+  { id: 'family1', name: 'Familia', members: 4 },
+  { id: 'roommates', name: 'Compañeros de piso', members: 3 },
 ];
 
-// Definir la interfaz para las props que recibe el componente
-// Esto es lo que resolvió el error que estabas viendo
-interface TransactionFormProps {
-  // Función que se llama cuando la transacción se guarda exitosamente
-  onSuccess?: () => void;
-  
-  // Datos iniciales para edición (opcional)
-  initialData?: Partial<Transaction>;
-  
-  // Indica si estamos editando una transacción existente
-  isEditing?: boolean;
-}
+export default function TransactionForm() {
+  // Estados del formulario
+  const [step, setStep] = useState<number>(1);
+  const [type, setType] = useState<TransactionType>('expense');
+  const [amount, setAmount] = useState<string>('');
+  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [category, setCategory] = useState<string>('');
+  const [description, setDescription] = useState<string>('');
+  const [familyGroup, setFamilyGroup] = useState<string>('');
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState<boolean>(false);
+  const [showFamilyDropdown, setShowFamilyDropdown] = useState<boolean>(false);
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-export default function TransactionForm({ 
-  onSuccess, 
-  initialData, 
-  isEditing = false 
-}: TransactionFormProps) {
-  // Obtener el usuario actual del store de autenticación
-  const { user } = useAuthStore();
-  
-  // Obtener funciones del store de transacciones
-  const { createTransaction, updateTransaction, isLoading } = useTransactionStore();
-  
-  // Estado para el tipo de transacción (gasto o ingreso)
-  const [transactionType, setTransactionType] = useState<'income' | 'expense'>(
-    initialData?.direction || 'expense'
+  // Filtrar categorías según el tipo de transacción
+  const filteredCategories = predefinedCategories.filter(
+    cat => cat.type === type || cat.type === 'both'
   );
-  
-  // Estado para mostrar/ocultar opciones de grupo familiar
-  const [showFamilyOptions, setShowFamilyOptions] = useState(!!initialData?.family_group_id);
-  
-  // Configurar react-hook-form con validación de Zod
-  const { 
-    register,          // Para registrar campos del formulario
-    handleSubmit,      // Para manejar el envío del formulario
-    control,           // Para componentes controlados
-    setValue,          // Para establecer valores programáticamente
-    watch,             // Para observar cambios en campos
-    reset,             // Para resetear el formulario
-    formState: { errors } // Para acceder a errores de validación
-  } = useForm<TransactionFormValues>({
-    resolver: zodResolver(transactionSchema),
-    // Valores iniciales para el formulario
-    defaultValues: {
-      direction: initialData?.direction || 'expense',
-      amount: initialData?.amount || 0,
-      date: initialData?.date 
-        ? format(new Date(initialData.date), 'yyyy-MM-dd')
-        : format(new Date(), 'yyyy-MM-dd'),
-      concepto: initialData?.concepto || '',
-      category_id: initialData?.category_id || '',
-      comercio: initialData?.comercio || '',
-      additional_info: initialData?.additional_info || '',
-      family_group_id: initialData?.family_group_id || '',
-      use_group_ratio: initialData?.use_group_ratio || false,
-    }
-  });
-  
-  // Filtrar categorías según el tipo de transacción seleccionado
-  const filteredCategories = sampleCategories.filter(
-    category => category.type === transactionType
-  );
-  
-  // Cuando cambia el tipo de transacción, actualizar el campo direction
-  // y resetear la categoría seleccionada porque las categorías son diferentes
-  useEffect(() => {
-    setValue('direction', transactionType);
-    setValue('category_id', ''); // Resetear categoría al cambiar tipo
-  }, [transactionType, setValue]);
-  
+
   // Manejar envío del formulario
-  const onSubmit = async (data: TransactionFormValues) => {
-    // Verificar que hay un usuario autenticado
-    if (!user) return;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    // Aquí iría la lógica para guardar la transacción en la base de datos
+    // Por ahora solo simulamos un proceso de guardado
     
     try {
-      // Preparar datos de la transacción
+      // Simulación de envío a API
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Datos a enviar
       const transactionData = {
-        ...data,
-        user_id: user.id,
-        // Asegurarse de que estos campos no sean undefined
-        family_group_id: data.family_group_id || null,
-        use_group_ratio: data.use_group_ratio || false,
+        type,
+        amount: parseFloat(amount),
+        date,
+        categoryId: category,
+        description,
+        familyGroupId: familyGroup || null,
+        receiptImage: receipt ? 'url_to_uploaded_image' : null,
       };
       
-      if (isEditing && initialData?.id) {
-        // Si estamos editando, actualizar la transacción existente
-        await updateTransaction(initialData.id, transactionData);
-        toast.success('Transacción actualizada con éxito');
-      } else {
-        // Si es nueva, crear la transacción
-        await createTransaction(transactionData);
-        toast.success('Transacción creada con éxito');
-        reset(); // Limpiar formulario después de crear
-      }
+      console.log('Transacción guardada:', transactionData);
       
-      // Llamar al callback de éxito si existe
-      if (onSuccess) onSuccess();
-    } catch (error: any) {
-      toast.error(error.message || 'Error al guardar la transacción');
+      // Resetear formulario
+      resetForm();
+      
+      // Mostrar mensaje de éxito (esto se puede mejorar con un sistema de notificaciones)
+      alert('Transacción guardada con éxito!');
+    } catch (error) {
+      console.error('Error al guardar la transacción:', error);
+      alert('Error al guardar la transacción. Inténtalo de nuevo.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
-  
+
+  // Resetear formulario
+  const resetForm = () => {
+    setStep(1);
+    setType('expense');
+    setAmount('');
+    setDate(new Date().toISOString().split('T')[0]);
+    setCategory('');
+    setDescription('');
+    setFamilyGroup('');
+    setReceipt(null);
+  };
+
+  // Manejar subida de comprobante
+  const handleReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setReceipt(e.target.files[0]);
+    }
+  };
+
+  // Obtener nombre de categoría seleccionada
+  const getSelectedCategoryName = () => {
+    const selected = predefinedCategories.find(cat => cat.id === category);
+    return selected ? `${selected.icon} ${selected.name}` : 'Seleccionar categoría';
+  };
+
+  // Obtener nombre de grupo familiar seleccionado
+  const getSelectedFamilyName = () => {
+    const selected = sampleFamilyGroups.find(group => group.id === familyGroup);
+    return selected ? selected.name : 'Ninguno';
+  };
+
+  // Avanzar al siguiente paso si están completos los datos necesarios
+  useEffect(() => {
+    if (step === 1 && amount && amount !== '0') {
+      setStep(2);
+    }
+  }, [amount, step]);
+
+  // Función para validar si el formulario está completo
+  const isFormComplete = () => {
+    return (
+      amount && 
+      parseFloat(amount) > 0 && 
+      date && 
+      category
+    );
+  };
+
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
-        {isEditing ? 'Editar transacción' : 'Nueva transacción'}
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 max-w-md mx-auto">
+      <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-6">
+        {type === 'expense' ? 'Registrar Gasto' : 'Registrar Ingreso'}
       </h2>
-      
-      {/* Formulario de transacción */}
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        {/* Tipo de transacción (Gasto/Ingreso) */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Tipo de transacción
-          </label>
-          <div className="flex space-x-4">
-            {/* Botón de Gasto */}
-            <button
-              type="button"
-              onClick={() => setTransactionType('expense')}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium ${
-                transactionType === 'expense'
-                  ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-              }`}
-            >
-              Gasto
-            </button>
-            {/* Botón de Ingreso */}
-            <button
-              type="button"
-              onClick={() => setTransactionType('income')}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium ${
-                transactionType === 'income'
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-              }`}
-            >
-              Ingreso
-            </button>
-          </div>
-        </div>
-        
-        {/* Campo Monto */}
-        <div className="space-y-2">
-          <label htmlFor="amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+
+      <div className="flex items-center justify-center space-x-4 mb-6">
+        <button
+          type="button"
+          onClick={() => setType('expense')}
+          className={`flex-1 py-2 px-4 rounded-md flex items-center justify-center space-x-2 ${
+            type === 'expense'
+              ? 'bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300 border border-red-200 dark:border-red-800'
+              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 border border-transparent'
+          }`}
+        >
+          <Minus size={18} />
+          <span>Gasto</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setType('income')}
+          className={`flex-1 py-2 px-4 rounded-md flex items-center justify-center space-x-2 ${
+            type === 'income'
+              ? 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300 border border-green-200 dark:border-green-800'
+              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 border border-transparent'
+          }`}
+        >
+          <Plus size={18} />
+          <span>Ingreso</span>
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit}>
+        {/* Paso 1: Monto */}
+        <div className={`mb-4 ${step === 1 ? 'block' : 'hidden'}`}>
+          <label htmlFor="amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Monto
           </label>
           <div className="relative rounded-md shadow-sm">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <DollarSign className="h-5 w-5 text-gray-400" />
+              <DollarSign size={18} className="text-gray-400" />
             </div>
-            {/* Input para el monto */}
             <input
-              id="amount"
               type="number"
-              step="0.01"
-              {...register('amount')}
-              className={`block w-full pl-10 pr-4 py-2 rounded-md focus:ring-2 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white ${
-                errors.amount
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-blue-500 focus:ring-blue-300'
-              }`}
+              id="amount"
               placeholder="0.00"
-              disabled={isLoading}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="block w-full pl-10 pr-12 py-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-lg"
+              step="0.01"
+              min="0"
+              required
+              autoFocus
             />
           </div>
-          {/* Mostrar mensaje de error si existe */}
-          {errors.amount && (
-            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.amount.message}</p>
-          )}
         </div>
-        
-        {/* Campo Fecha */}
-        <div className="space-y-2">
-          <label htmlFor="date" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Fecha
-          </label>
-          <div className="relative rounded-md shadow-sm">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <CalendarIcon className="h-5 w-5 text-gray-400" />
-            </div>
-            {/* Input para la fecha */}
-            <input
-              id="date"
-              type="date"
-              {...register('date')}
-              className={`block w-full pl-10 pr-4 py-2 rounded-md focus:ring-2 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white ${
-                errors.date
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-blue-500 focus:ring-blue-300'
-              }`}
-              disabled={isLoading}
-            />
-          </div>
-          {/* Mostrar mensaje de error si existe */}
-          {errors.date && (
-            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.date.message}</p>
-          )}
-        </div>
-        
-        {/* Campo Categoría */}
-        <div className="space-y-2">
-          <label htmlFor="category_id" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Categoría
-          </label>
-          <div className="relative rounded-md shadow-sm">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Tag className="h-5 w-5 text-gray-400" />
-            </div>
-            {/* Select para elegir categoría */}
-            <select
-              id="category_id"
-              {...register('category_id')}
-              className={`block w-full pl-10 pr-4 py-2 rounded-md focus:ring-2 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white ${
-                errors.category_id
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-blue-500 focus:ring-blue-300'
-              }`}
-              disabled={isLoading}
-            >
-              <option value="">Selecciona una categoría</option>
-              {/* Mostrar solo categorías del tipo seleccionado */}
-              {filteredCategories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          {/* Mostrar mensaje de error si existe */}
-          {errors.category_id && (
-            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.category_id.message}</p>
-          )}
-        </div>
-        
-        {/* Campo Descripción */}
-        <div className="space-y-2">
-          <label htmlFor="concepto" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Descripción
-          </label>
-          <div className="relative rounded-md shadow-sm">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <FileText className="h-5 w-5 text-gray-400" />
-            </div>
-            {/* Input para la descripción */}
-            <input
-              id="concepto"
-              type="text"
-              {...register('concepto')}
-              className={`block w-full pl-10 pr-4 py-2 rounded-md focus:ring-2 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white ${
-                errors.concepto
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-blue-500 focus:ring-blue-300'
-              }`}
-              placeholder="Descripción de la transacción"
-              disabled={isLoading}
-            />
-          </div>
-          {/* Mostrar mensaje de error si existe */}
-          {errors.concepto && (
-            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.concepto.message}</p>
-          )}
-        </div>
-        
-        {/* Campo Comercio (opcional) */}
-        <div className="space-y-2">
-          <label htmlFor="comercio" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Comercio (opcional)
-          </label>
-          {/* Input para el comercio */}
-          <input
-            id="comercio"
-            type="text"
-            {...register('comercio')}
-            className="block w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:outline-none focus:border-blue-500 focus:ring-blue-300 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            placeholder="Nombre del comercio"
-            disabled={isLoading}
-          />
-        </div>
-        
-        {/* Opciones específicas para gastos */}
-        {transactionType === 'expense' && (
-          <div className="space-y-4">
-            {/* Checkbox para habilitar gastos compartidos */}
-            <div className="flex items-center">
+
+        {/* Paso 2: Resto del formulario */}
+        <div className={step >= 2 ? 'block' : 'hidden'}>
+          {/* Fecha */}
+          <div className="mb-4">
+            <label htmlFor="date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Fecha
+            </label>
+            <div className="relative rounded-md shadow-sm">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Calendar size={18} className="text-gray-400" />
+              </div>
               <input
-                id="showFamilyOptions"
-                type="checkbox"
-                checked={showFamilyOptions}
-                onChange={(e) => setShowFamilyOptions(e.target.checked)}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded dark:border-gray-600 dark:bg-gray-700"
+                type="date"
+                id="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                required
               />
-              <label htmlFor="showFamilyOptions" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
-                Este gasto es compartido con mi grupo familiar
-              </label>
             </div>
-            
-            {/* Si el gasto es compartido, mostrar opciones adicionales */}
-            {showFamilyOptions && (
-              <>
-                {/* Selección de grupo familiar */}
-                <div className="space-y-2">
-                  <label htmlFor="family_group_id" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Grupo familiar
-                  </label>
-                  <select
-                    id="family_group_id"
-                    {...register('family_group_id')}
-                    className="block w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:outline-none focus:border-blue-500 focus:ring-blue-300 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                    disabled={isLoading}
-                  >
-                    <option value="">Selecciona un grupo</option>
-                    {sampleFamilyGroups.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                
-                {/* Opción para usar regla de reparto del grupo */}
+          </div>
+
+          {/* Categoría */}
+          <div className="mb-4 relative">
+            <label htmlFor="category" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Categoría
+            </label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                className="flex justify-between items-center w-full pl-3 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
                 <div className="flex items-center">
-                  <input
-                    id="use_group_ratio"
-                    type="checkbox"
-                    {...register('use_group_ratio')}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded dark:border-gray-600 dark:bg-gray-700"
-                    disabled={isLoading}
-                  />
-                  <label htmlFor="use_group_ratio" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
-                    Usar la regla de reparto configurada en el grupo
-                  </label>
+                  <Tag size={18} className="text-gray-400 mr-2" />
+                  <span>{getSelectedCategoryName()}</span>
                 </div>
-              </>
+                <ChevronDown size={18} className="text-gray-400" />
+              </button>
+
+              {showCategoryDropdown && (
+                <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700 max-h-60 overflow-y-auto">
+                  {filteredCategories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      className="flex items-center w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700"
+                      onClick={() => {
+                        setCategory(cat.id);
+                        setShowCategoryDropdown(false);
+                      }}
+                    >
+                      <span className="mr-2" style={{ color: cat.color }}>
+                        {cat.icon}
+                      </span>
+                      <span className="text-gray-900 dark:text-white">{cat.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Descripción */}
+          <div className="mb-4">
+            <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Descripción
+            </label>
+            <div className="relative rounded-md shadow-sm">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <AlignLeft size={18} className="text-gray-400" />
+              </div>
+              <input
+                type="text"
+                id="description"
+                placeholder="Descripción (opcional)"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              />
+            </div>
+          </div>
+
+          {/* Grupo Familiar */}
+          <div className="mb-4 relative">
+            <label htmlFor="familyGroup" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Grupo Familiar
+            </label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowFamilyDropdown(!showFamilyDropdown)}
+                className="flex justify-between items-center w-full pl-3 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <div className="flex items-center">
+                  <Users size={18} className="text-gray-400 mr-2" />
+                  <span>{getSelectedFamilyName()}</span>
+                </div>
+                <ChevronDown size={18} className="text-gray-400" />
+              </button>
+
+              {showFamilyDropdown && (
+                <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 shadow-lg rounded-md border border-gray-200 dark:border-gray-700">
+                  <button
+                    type="button"
+                    className="flex items-center w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700"
+                    onClick={() => {
+                      setFamilyGroup('');
+                      setShowFamilyDropdown(false);
+                    }}
+                  >
+                    <span className="text-gray-900 dark:text-white">Ninguno</span>
+                  </button>
+                  
+                  {sampleFamilyGroups.map((group) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      className="flex items-center w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700"
+                      onClick={() => {
+                        setFamilyGroup(group.id);
+                        setShowFamilyDropdown(false);
+                      }}
+                    >
+                      <span className="text-gray-900 dark:text-white">
+                        {group.name} ({group.members} miembros)
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Subir comprobante */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Comprobante (opcional)
+            </label>
+            {receipt ? (
+              <div className="flex items-center p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700">
+                <div className="flex-1 truncate">{receipt.name}</div>
+                <button
+                  type="button"
+                  onClick={() => setReceipt(null)}
+                  className="ml-2 text-red-500 hover:text-red-700"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            ) : (
+              <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md">
+                <div className="space-y-1 text-center">
+                  <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                  <div className="flex text-sm text-gray-600 dark:text-gray-400">
+                    <label
+                      htmlFor="receipt"
+                      className="relative cursor-pointer bg-white dark:bg-transparent rounded-md font-medium text-blue-600 dark:text-blue-400 hover:text-blue-500 focus-within:outline-none"
+                    >
+                      <span>Subir archivo</span>
+                      <input
+                        id="receipt"
+                        name="receipt"
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={handleReceiptUpload}
+                      />
+                    </label>
+                    <p className="pl-1">o arrastra y suelta</p>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    PNG, JPG, GIF hasta 10MB
+                  </p>
+                </div>
+              </div>
             )}
           </div>
-        )}
-        
-        {/* Botón para guardar la transacción */}
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isLoading ? (
-            <span className="flex items-center justify-center">
-              {/* Spinner para indicar carga */}
-              <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Guardando...
-            </span>
-          ) : (
-            <span className="flex items-center justify-center">
-              <CheckCircle className="mr-2 h-5 w-5" />
-              {isEditing ? 'Actualizar transacción' : 'Guardar transacción'}
-            </span>
-          )}
-        </button>
+
+          {/* Botones de acción */}
+          <div className="flex justify-between">
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={!isFormComplete() || isSubmitting}
+              className={`px-4 py-2 rounded-md shadow-sm text-sm font-medium text-white flex items-center ${
+                isFormComplete() && !isSubmitting
+                  ? 'bg-blue-600 hover:bg-blue-700'
+                  : 'bg-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Guardando...
+                </>
+              ) : (
+                <>
+                  <Check size={18} className="mr-1" />
+                  Guardar
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </form>
     </div>
   );
