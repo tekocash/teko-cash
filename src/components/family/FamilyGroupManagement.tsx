@@ -32,16 +32,25 @@ import {
   createFamilyGroup,
   updateMemberPercentage,
   leaveFamilyGroup
-}  from '@/services/family-group-service';
+}  from '@/services/family-service';
+
+// Definir el tipo para el método de cálculo
+type CalculationType = 'ratio' | 'fixed';
+
+// Definir la interfaz para el formulario de nuevo grupo
+interface FamilyGroupInput {
+  name: string;
+  type_calculo: CalculationType;
+}
 
 interface FamilyGroupManagementProps {
   initialGroupId?: string;
 }
 
-// Estado inicial para el formulario de nuevo grupo
-const initialNewGroupState = {
+// Estado inicial para el formulario de nuevo grupo con tipado explícito
+const initialNewGroupState: FamilyGroupInput = {
   name: '',
-  type_calculo: 'ratio' 
+  type_calculo: 'ratio'
 };
 
 // Estado inicial para el formulario de invitación
@@ -67,7 +76,7 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
   const [inviteLinkCopied, setInviteLinkCopied] = useState<boolean>(false);
   
   // Estados para formularios
-  const [newGroup, setNewGroup] = useState(initialNewGroupState);
+  const [newGroup, setNewGroup] = useState<FamilyGroupInput>(initialNewGroupState);
   const [invite, setInvite] = useState(initialInviteState);
   const [editPercentage, setEditPercentage] = useState<number>(0);
 
@@ -78,7 +87,18 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
   // Cargar grupos familiares del usuario
   useEffect(() => {
     if (user?.id) {
-      loadUserGroups();
+      const loadFamilyGroups = async () => {
+        try {
+          const { data, error } = await getUserFamilyGroups(user.id);
+          if (data && !error) {
+           // setFamilyGroups(data); //REVISAR
+          }
+        } catch (err) {
+          console.error('Error al cargar grupos familiares:', err);
+        }
+      };
+      
+      loadFamilyGroups();
     }
   }, [user]);
 
@@ -189,7 +209,7 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
       setGroupMembers(members => 
         members.map(member => 
           member.user_id === memberId 
-            ? {...member, percentage: editPercentage} 
+            ? { ...member, percentage: editPercentage } 
             : member
         )
       );

@@ -1,12 +1,17 @@
 'use client';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import FamilyGroupManagement from '@/components/family/FamilyGroupManagement';
-import { useRouter } from 'next/navigation';
+import TransactionForm from '@/components/transactions/TransactionForm';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function FamilyGroupPage() {
+export default function NewTransactionPage() {
   const { user, session } = useAuthStore();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const type = searchParams.get('type');
+  
+  // Determinar el tipo de transacción según el parámetro URL
+  const initialDirection = type === 'income' ? 'income' : 'expense';
 
   // Redireccionar si no hay sesión
   useEffect(() => {
@@ -26,5 +31,5 @@ export default function FamilyGroupPage() {
     );
   }
 
-  return <FamilyGroupManagement />;
+  return <TransactionForm initialDirection={initialDirection} />;
 }

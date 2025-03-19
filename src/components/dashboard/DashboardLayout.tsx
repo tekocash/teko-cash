@@ -62,8 +62,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
   // Opciones del menú de crear
   const createOptions = [
-    { icon: <DollarSign size={18} />, title: 'Registrar Gasto', path: '/dashboard/expenses/new' },
-    { icon: <Plus size={18} />, title: 'Registrar Ingreso', path: '/dashboard/incomes/new' },
+    { icon: <DollarSign size={18} />, title: 'Registrar Gasto', path: '/dashboard/transactions/new?type=expense' },
+    { icon: <Plus size={18} />, title: 'Registrar Ingreso', path: '/dashboard/transactions/new?type=income' },
     { icon: <PieChart size={18} />, title: 'Crear Presupuesto', path: '/dashboard/budgets/new' },
     { icon: <Users size={18} />, title: 'Crear Grupo Familiar', path: '/dashboard/family/new' },
   ];
