@@ -3,14 +3,14 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import TransactionForm from '@/components/transactions/TransactionForm';
 
 export const metadata = {
-  title: 'Nueva Transacción | Teko Cash',
-  description: 'Registra una nueva transacción en tu cuenta de Teko Cash',
+  title: 'Nuevo Gasto | Teko Cash',
+  description: 'Registra un nuevo gasto en tu cuenta de Teko Cash',
 };
 
-export default function NewTransactionPage() {
+export default function ExpenseTransactionPage() {
   return (
     <DashboardLayout>
-      <TransactionForm />
+      <TransactionForm initialDirection="expense" />
     </DashboardLayout>
   );
 }

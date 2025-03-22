@@ -1,4 +1,14 @@
+// src/services/family-service.ts
 import { createClient } from '@supabase/supabase-js';
+import { 
+  DbFamilyGroup, 
+  DbFamilyGroupParticipant, 
+  DbBalance 
+} from '@/types/database';
+import { 
+  ApiFamilyGroup,
+  ApiGroupMemberDetails
+} from '@/types/api';
 
 // Asumimos que estas variables están definidas en tu archivo .env.local
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -6,65 +16,69 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Tipos basados en el esquema de la base de datos
-export interface FamilyGroup {
-  id: string;
-  name: string;
-  owner_id: string;
-  invite_code: string | null;
-  type_calculo: 'fixed' | 'ratio';
-  created_at: string;
-}
-
-export interface FamilyGroupParticipant {
-  id: string;
-  group_id: string;
-  user_id: string;
-  status: 'pending' | 'active' | 'left' | 'rejected';
-  joined_at: string | null;
-  left_at: string | null;
-  rejected_at: string | null;
-  percentage: number | null;
-  income_types_used: string[] | null;
-}
-
-export interface Balance {
-  id: string;
-  group_id: string;
-  user_id: string;
-  net_balance: number;
-  last_updated: string;
-}
-
-export interface GroupMemberDetails {
-  user_id: string;
-  email: string;
-  display_name: string;
-  status: 'pending' | 'active' | 'left' | 'rejected';
-  percentage: number | null;
-  joined_at: string | null;
-  net_balance: number;
-}
-
 /**
  * Obtiene los grupos familiares a los que pertenece un usuario
  */
 export const getUserFamilyGroups = async (
   userId: string
-): Promise<{ data: FamilyGroup[] | null; error: any }> => {
-  const { data, error } = await supabase
-    .from('family_groups')
-    .select('*')
-    .or(`owner_id.eq.${userId},id.in.(${
-      supabase.from('family_group_participants')
-        .select('group_id')
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .toString()
-    })`)
-    .order('created_at', { ascending: false });
-
-  return { data, error };
+): Promise<{ data: ApiFamilyGroup[] | null; error: any }> => {
+  try {
+    // Primero obtenemos los grupos donde el usuario es propietario
+    const { data: ownedGroups, error: ownedError } = await supabase
+      .from('family_groups')
+      .select('*')
+      .eq('owner_id', userId)
+      .order('created_at', { ascending: false });
+      
+    if (ownedError) {
+      return { data: null, error: ownedError };
+    }
+    
+    // Obtener los IDs de los grupos donde el usuario es participante
+    const { data: participantData, error: participantError } = await supabase
+      .from('family_group_participants')
+      .select('group_id')
+      .eq('user_id', userId)
+      .eq('status', 'active');
+      
+    if (participantError) {
+      return { data: null, error: participantError };
+    }
+    
+    // Si no hay grupos participantes, devolver solo los propios
+    if (!participantData || participantData.length === 0) {
+      return { data: ownedGroups, error: null };
+    }
+    
+    // Extraer IDs de los grupos participantes
+    const participantGroupIds = participantData.map(p => p.group_id);
+    
+    // Obtener los detalles de los grupos participantes
+    const { data: memberGroups, error: memberError } = await supabase
+      .from('family_groups')
+      .select('*')
+      .in('id', participantGroupIds)
+      .order('created_at', { ascending: false });
+      
+    if (memberError) {
+      return { data: null, error: memberError };
+    }
+    
+    // Combinar resultados eliminando duplicados (por si es propietario y participante)
+    const allGroups = [...ownedGroups];
+    const ownedIds = new Set(ownedGroups.map(g => g.id));
+    
+    memberGroups.forEach(group => {
+      if (!ownedIds.has(group.id)) {
+        allGroups.push(group);
+      }
+    });
+    
+    return { data: allGroups, error: null };
+  } catch (error) {
+    console.error("Error al obtener grupos familiares:", error);
+    return { data: null, error };
+  }
 };
 
 /**
@@ -72,7 +86,7 @@ export const getUserFamilyGroups = async (
  */
 export const getFamilyGroupById = async (
   groupId: string
-): Promise<{ data: FamilyGroup | null; error: any }> => {
+): Promise<{ data: DbFamilyGroup | null; error: any }> => {
   const { data, error } = await supabase
     .from('family_groups')
     .select('*')
@@ -86,8 +100,8 @@ export const getFamilyGroupById = async (
  * Crea un nuevo grupo familiar
  */
 export const createFamilyGroup = async (
-  groupData: Omit<FamilyGroup, 'id' | 'created_at' | 'invite_code'>
-): Promise<{ data: FamilyGroup | null; error: any }> => {
+  groupData: Omit<DbFamilyGroup, 'id' | 'created_at' | 'updated_at' | 'invite_code'>
+): Promise<{ data: DbFamilyGroup | null; error: any }> => {
   // Generar código de invitación único
   const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
 
@@ -123,8 +137,8 @@ export const createFamilyGroup = async (
  */
 export const updateFamilyGroup = async (
   groupId: string,
-  updates: Partial<FamilyGroup>
-): Promise<{ data: FamilyGroup | null; error: any }> => {
+  updates: Partial<DbFamilyGroup>
+): Promise<{ data: DbFamilyGroup | null; error: any }> => {
   const { data, error } = await supabase
     .from('family_groups')
     .update(updates)
@@ -284,7 +298,7 @@ export const leaveFamilyGroup = async (
  */
 export const getFamilyGroupMembers = async (
   groupId: string
-): Promise<{ data: GroupMemberDetails[] | null; error: any }> => {
+): Promise<{ data: ApiGroupMemberDetails[] | null; error: any }> => {
   // Esta consulta es compleja y podría implementarse como una función RPC en PostgreSQL
   // Para simplicidad, usamos múltiples consultas y combinamos los resultados
 
@@ -333,7 +347,7 @@ export const getFamilyGroupMembers = async (
   });
 
   // Combinar datos
-  const memberDetails = participants.map(participant => {
+  const memberDetails: ApiGroupMemberDetails[] = participants.map(participant => {
     const user = userMap.get(participant.user_id);
     return {
       user_id: participant.user_id,
@@ -372,7 +386,7 @@ export const updateMemberPercentage = async (
 export const getUserGroupBalance = async (
   groupId: string,
   userId: string
-): Promise<{ data: Balance | null; error: any }> => {
+): Promise<{ data: DbBalance | null; error: any }> => {
   const { data, error } = await supabase
     .from('balances')
     .select('*')
@@ -390,7 +404,7 @@ export const updateUserGroupBalance = async (
   groupId: string,
   userId: string,
   amount: number // Positivo = ingreso, Negativo = gasto
-): Promise<{ data: Balance | null; error: any }> => {
+): Promise<{ data: DbBalance | null; error: any }> => {
   // Primero obtenemos el balance actual
   const { data: currentBalance, error: getError } = await getUserGroupBalance(groupId, userId);
   
@@ -433,7 +447,7 @@ export const updateUserGroupBalance = async (
  */
 export const getFamilyGroupByInviteCode = async (
   inviteCode: string
-): Promise<{ data: FamilyGroup | null; error: any }> => {
+): Promise<{ data: DbFamilyGroup | null; error: any }> => {
   const { data, error } = await supabase
     .from('family_groups')
     .select('*')
@@ -449,7 +463,7 @@ export const getFamilyGroupByInviteCode = async (
 export const joinFamilyGroupByInviteCode = async (
   inviteCode: string,
   userId: string
-): Promise<{ data: FamilyGroup | null; error: any }> => {
+): Promise<{ data: DbFamilyGroup | null; error: any }> => {
   // Primero obtenemos el grupo
   const { data: group, error: groupError } = await getFamilyGroupByInviteCode(inviteCode);
   
@@ -490,7 +504,7 @@ export const joinFamilyGroupByInviteCode = async (
 
   // Añadir como nuevo miembro
   // Calculamos porcentaje inicial según el tipo de cálculo del grupo
-  let initialPercentage : number = 0;
+  let initialPercentage: number = 0;
   if (group.type_calculo === 'ratio') {
     // Obtener total de miembros activos
     const { data: activeMembers } = await supabase

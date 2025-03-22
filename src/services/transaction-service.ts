@@ -1,41 +1,14 @@
+// src/services/transaction-service.ts
 import { createClient } from '@supabase/supabase-js';
+import { DbTransaction, DbTransactionParticipant } from '@/types/database';
+import { ApiTransaction, ApiTransactionTotals, ApiExpenseDistribution } from '@/types/api';
+import { TransactionFormData } from '@/types/ui';
 
 // Asumimos que estas variables están definidas en tu archivo .env.local
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Tipos basados en el esquema de la base de datos
-export interface Transaction {
-  id: string;
-  user_id: string;
-  family_group_id: string | null;
-  budget_id: string | null;
-  direction: 'income' | 'expense';
-  amount: number;
-  date: string;
-  category_id: string;
-  concepto: string;
-  comercio: string | null;
-  additional_info: string | null;
-  nro_operacion: string | null;
-  payment_method_id: string | null;
-  transaction_type_id: string | null;
-  periodicity: 'mensual' | 'trimestral' | 'anual' | 'ocasional' | null;
-  created_at: string;
-  use_group_ratio: boolean;
-  currency_id: string | null;
-}
-
-export interface TransactionParticipant {
-  id: string;
-  transaction_id: string;
-  user_id: string;
-  assigned_amount: number;
-}
-
-// Funciones para interactuar con la tabla de transacciones
 
 /**
  * Obtiene las transacciones del usuario actual
@@ -48,14 +21,19 @@ export const getUserTransactions = async (
   userId: string,
   limit: number = 10, 
   page: number = 1
-): Promise<{ data: Transaction[] | null; error: any }> => {
+): Promise<{ data: ApiTransaction[] | null; error: any }> => {
   // Calcular el offset para la paginación
   const offset = (page - 1) * limit;
 
   // Consulta a Supabase
   const { data, error } = await supabase
     .from('transactions')
-    .select('*')
+    .select(`
+      *,
+      category:category_id (*),
+      payment_method:payment_method_id (*),
+      currency:currency_id (*)
+    `)
     .eq('user_id', userId)
     .order('date', { ascending: false })
     .limit(limit)
@@ -81,14 +59,19 @@ export const getFilteredTransactions = async (
   },
   limit: number = 10,
   page: number = 1
-): Promise<{ data: Transaction[] | null; error: any }> => {
+): Promise<{ data: ApiTransaction[] | null; error: any }> => {
   // Calcular el offset para la paginación
   const offset = (page - 1) * limit;
 
   // Iniciar la consulta base
   let query = supabase
     .from('transactions')
-    .select('*')
+    .select(`
+      *,
+      category:category_id (*),
+      payment_method:payment_method_id (*),
+      currency:currency_id (*)
+    `)
     .eq('user_id', userId);
 
   // Aplicar filtros si están presentes
@@ -144,7 +127,7 @@ export const getTransactionTotals = async (
   userId: string,
   startDate: string,
   endDate: string
-): Promise<{ incomes: number; expenses: number; error: any }> => {
+): Promise<ApiTransactionTotals> => {
   // Obtener todas las transacciones del período
   const { data, error } = await supabase
     .from('transactions')
@@ -177,12 +160,37 @@ export const getTransactionTotals = async (
  * Crea una nueva transacción
  */
 export const createTransaction = async (
-  transaction: Omit<Transaction, 'id' | 'created_at'>
-): Promise<{ data: Transaction | null; error: any }> => {
+  transaction: TransactionFormData
+): Promise<{ data: ApiTransaction | null; error: any }> => {
+  // Convertir el objeto TransactionFormData a DbTransaction sin los campos id y created_at
+  const dbTransaction: Omit<DbTransaction, 'id' | 'created_at' | 'updated_at'> = {
+    user_id: transaction.user_id,
+    direction: transaction.direction,
+    amount: transaction.amount,
+    date: transaction.date,
+    category_id: transaction.category_id,
+    concepto: transaction.concepto,
+    comercio: transaction.comercio,
+    family_group_id: transaction.family_group_id,
+    use_group_ratio: transaction.use_group_ratio,
+    payment_method_id: transaction.payment_method_id,
+    transaction_type_id: transaction.transaction_type_id,
+    currency_id: transaction.currency_id,
+    additional_info: transaction.additional_info,
+    periodicity: transaction.periodicity,
+    budget_id: transaction.budget_id,
+    nro_operacion: transaction.nro_operacion
+  };
+
   const { data, error } = await supabase
     .from('transactions')
-    .insert(transaction)
-    .select()
+    .insert(dbTransaction)
+    .select(`
+      *,
+      category:category_id (*),
+      payment_method:payment_method_id (*),
+      currency:currency_id (*)
+    `)
     .single();
 
   return { data, error };
@@ -193,13 +201,18 @@ export const createTransaction = async (
  */
 export const updateTransaction = async (
   id: string,
-  updates: Partial<Transaction>
-): Promise<{ data: Transaction | null; error: any }> => {
+  updates: Partial<DbTransaction>
+): Promise<{ data: ApiTransaction | null; error: any }> => {
   const { data, error } = await supabase
     .from('transactions')
     .update(updates)
     .eq('id', id)
-    .select()
+    .select(`
+      *,
+      category:category_id (*),
+      payment_method:payment_method_id (*),
+      currency:currency_id (*)
+    `)
     .single();
 
   return { data, error };
@@ -226,12 +239,17 @@ export const getFamilyGroupTransactions = async (
   familyGroupId: string,
   limit: number = 10,
   page: number = 1
-): Promise<{ data: Transaction[] | null; error: any }> => {
+): Promise<{ data: ApiTransaction[] | null; error: any }> => {
   const offset = (page - 1) * limit;
 
   const { data, error } = await supabase
     .from('transactions')
-    .select('*')
+    .select(`
+      *,
+      category:category_id (*),
+      payment_method:payment_method_id (*),
+      currency:currency_id (*)
+    `)
     .eq('family_group_id', familyGroupId)
     .order('date', { ascending: false })
     .limit(limit)
@@ -245,7 +263,7 @@ export const getFamilyGroupTransactions = async (
  */
 export const getTransactionParticipants = async (
   transactionId: string
-): Promise<{ data: TransactionParticipant[] | null; error: any }> => {
+): Promise<{ data: DbTransactionParticipant[] | null; error: any }> => {
   const { data, error } = await supabase
     .from('transaction_participants')
     .select('*')
@@ -258,8 +276,8 @@ export const getTransactionParticipants = async (
  * Asigna participantes a una transacción
  */
 export const assignTransactionParticipants = async (
-  participants: Omit<TransactionParticipant, 'id'>[]
-): Promise<{ data: TransactionParticipant[] | null; error: any }> => {
+  participants: Omit<DbTransactionParticipant, 'id' | 'created_at'>[]
+): Promise<{ data: DbTransactionParticipant[] | null; error: any }> => {
   const { data, error } = await supabase
     .from('transaction_participants')
     .insert(participants)
@@ -275,7 +293,7 @@ export const getExpenseDistributionByCategory = async (
   userId: string,
   startDate: string,
   endDate: string
-): Promise<{ data: { category_id: string; total: number }[] | null; error: any }> => {
+): Promise<{ data: ApiExpenseDistribution[] | null; error: any }> => {
   // Esta consulta usa PostgreSQL functions para agrupar y sumar por categoría
   const { data, error } = await supabase
     .rpc('get_expense_distribution_by_category', { 
