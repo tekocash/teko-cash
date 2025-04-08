@@ -7,10 +7,10 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 
 // Importar servicios
-import { createTransaction } from '@/services/transaction-service';
-import { getUserCategories } from '@/services/category-service';
-import { getUserFamilyGroups } from '@/services/family-service';
-import { getUserPaymentMethods } from '@/services/payment-method-service';
+import { createTransaction } from '@/features/transactions/service/transaction-service';
+import { getUserCategories } from '@/features/categories/services/category-service';
+import { getUserFamilyGroups } from '@/features/family/services/family-service';
+import { getUserPaymentMethods } from '@/features/payment-method/services/payment-method-service';
 import { useAuthStore } from '@/store/auth-store';
 
 // Importar adaptadores
@@ -19,7 +19,7 @@ import {
   adaptFamilyGroups, 
   adaptPaymentMethods,
   prepareTransactionForApi
-} from '@/services/adapter-service';
+} from '@/lib/adapters/adapter-service';
 
 // Importar componentes UI
 import {
@@ -43,20 +43,20 @@ import type {
 } from '@/types/ui';
 
 // Importar componentes del formulario
-import { DirectionSelector } from './form-elements';
-import { FamilyGroupSelector } from './form-elements';
-import { AmountInput } from './form-elements';
-import { CategorySelector } from './form-elements';
-import { PaymentMethodSelector } from './form-elements';
-import { TransactionTypeSelector } from './form-elements';
-import { PeriodicitySelector } from './form-elements';
-import { AdditionalInfoInput } from './form-elements';
-import { ReceiptUploader } from './form-elements';
-import { CommerceInput } from './form-elements';
-import { SubmitButton } from './form-elements';
-import { ErrorMessage } from './form-elements';
-import { SuccessMessage } from './form-elements';
-import { AdvancedOptionsToggle } from './form-elements';
+import { DirectionSelector } from '../../../components/organisms';
+import { FamilyGroupSelector } from '../../../components/organisms';
+import { AmountInput } from '../../../components/organisms';
+import { CategorySelector } from '../../../components/organisms';
+import { PaymentMethodSelector } from '../../../components/organisms';
+import { TransactionTypeSelector } from '../../../components/organisms';
+import { PeriodicitySelector } from '../../../components/organisms';
+import { AdditionalInfoInput } from '../../../components/organisms';
+import { ReceiptUploader } from '../../../components/organisms';
+import { CommerceInput } from '../../../components/organisms';
+import { SubmitButton } from '../../../components/organisms';
+import { ErrorMessage } from '../../../components/organisms';
+import { SuccessMessage } from '../../../components/organisms';
+import { AdvancedOptionsToggle } from '../../../components/organisms';
 
 // Definir la interfaz de props para el componente
 interface TransactionFormProps {

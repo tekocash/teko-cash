@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import DashboardLayout from '../dashboard/DashboardLayout';
+import DashboardLayout from '../../dashboard/components/DashboardLayout';
 
 import { 
   Users,
@@ -32,7 +32,7 @@ import {
   createFamilyGroup,
   updateMemberPercentage,
   leaveFamilyGroup
-}  from '@/services/family-service';
+}  from '@/features/family/services/family-service';
 
 // Definir el tipo para el método de cálculo
 type CalculationType = 'ratio' | 'fixed';

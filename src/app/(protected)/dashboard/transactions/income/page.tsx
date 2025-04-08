@@ -1,6 +1,6 @@
 import React from 'react';
-import DashboardLayout from '@/components/dashboard/DashboardLayout';
-import TransactionForm from '@/components/transactions/TransactionForm';
+import DashboardLayout from '@/features/dashboard/components/DashboardLayout';
+import TransactionForm from '@/features/transactions/components/TransactionForm';
 
 export const metadata = {
   title: 'Nuevo Ingreso | Teko Cash',

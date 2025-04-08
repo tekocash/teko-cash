@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import DashboardLayout from '../dashboard/DashboardLayout';
+import DashboardLayout from '../dashboard/components/DashboardLayout';
 import { Plus, Edit, Trash, X, Check, Filter, Search, ChevronDown, Minus } from 'lucide-react';
 import {
   getCategoriesWithPreferences,
@@ -10,8 +10,8 @@ import {
   deleteCategory,
   setUserCategoryPreference,
   CategoryWithPreferences
-} from '@/services/category-service';
-import { getUserFamilyGroups, FamilyGroup } from '@/services/family-service';
+} from '@/features/categories/services/category-service';
+import { getUserFamilyGroups, FamilyGroup } from '@/features/family/services/family-service';
 
 // Paleta de colores predefinidos
 const COLOR_PALETTE = [

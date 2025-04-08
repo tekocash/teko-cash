@@ -1,7 +1,7 @@
 'use client';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import FamilyGroupManagement from '@/components/family/FamilyGroupManagement';
+import FamilyGroupManagement from '@/features/family/components/FamilyGroupManagement';
 import { useRouter } from 'next/navigation';
 
 export default function FamilyGroupPage() {

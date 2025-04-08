@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import DashboardLayout from '@/features/dashboard/components/DashboardLayout';
 import { CreditCard, Building, Info, X, CheckCircle, Pencil, Trash, Plus } from 'lucide-react';
 import { 
   getUserPaymentMethods, 
@@ -12,7 +12,7 @@ import {
   deletePaymentMethod, 
   togglePaymentMethodStatus,
   PaymentMethod
-} from '@/services/payment-method-service';
+} from '@/features/payment-method/services/payment-method-service';
 
 // Importar componentes de UI
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
