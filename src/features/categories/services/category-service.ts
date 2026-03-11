@@ -1,13 +1,7 @@
 // src/services/category-service.ts
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase/client';
 import { DbCategory, DbUserCategoryPreference } from '@/types/database';
 import { ApiCategory, ApiCategoryWithPreferences } from '@/types/api';
-
-// Asumimos que estas variables están definidas en tu archivo .env.local
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
  * Obtiene todas las categorías disponibles para un usuario

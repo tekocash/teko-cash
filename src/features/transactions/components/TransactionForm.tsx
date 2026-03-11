@@ -2,8 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 
 // Importar servicios
@@ -77,7 +76,7 @@ const mockTransactionTypes: TransactionType[] = [
  */
 export default function TransactionForm({ initialDirection = 'expense' }: TransactionFormProps) {
   const { user } = useAuthStore();
-  const router = useRouter();
+  const navigate = useNavigate();
   
   // Estados del formulario
   const [direction, setDirection] = useState<TransactionDirection>(initialDirection);
@@ -261,14 +260,14 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
    * Navega a la pantalla de creación de nueva categoría
    */
   const handleNewCategoryClick = () => {
-    router.push(`/dashboard/categories/new?type=${direction}&familyGroupId=${familyGroupId || ''}`);
+    navigate(`/dashboard/categories/new?type=${direction}&familyGroupId=${familyGroupId || ''}`);
   };
 
   /**
    * Navega a la pantalla de creación de nuevo método de pago
    */
   const handleNewPaymentMethodClick = () => {
-    router.push('/dashboard/payment-methods/new');
+    navigate('/dashboard/payment-methods/new');
   };
 
   /**
@@ -285,7 +284,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
         <SuccessMessage
           message={successMessage}
           onNewTransaction={resetForm}
-          onGoToDashboard={() => router.push('/dashboard')}
+          onGoToDashboard={() => navigate('/dashboard')}
         />
       )}
   
@@ -294,7 +293,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
         <CardHeader className="pb-0">
           <div className="flex items-center justify-between mb-4">
             <Link 
-              href="/dashboard" 
+              to="/dashboard"
               className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
             >
               <ArrowLeft size={20} />
@@ -432,7 +431,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => router.back()}
+                onClick={() => navigate(-1)}
               >
                 Cancelar
               </Button>

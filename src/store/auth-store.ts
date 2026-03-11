@@ -21,6 +21,16 @@ interface AuthState {
   updateUserProfile: (displayName: string) => Promise<void>; // Nueva función añadida
 }
 
+// Escucha cambios de sesión globalmente (cubre el retorno del flujo OAuth)
+supabase.auth.onAuthStateChange((_event, session) => {
+  const store = useAuthStore.getState();
+  if (session) {
+    store.refreshSession();
+  } else {
+    useAuthStore.setState({ user: null, session: null });
+  }
+});
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -51,31 +61,17 @@ export const useAuthStore = create<AuthState>()(
       signInWithGoogle: async () => {
         try {
           set({ isLoading: true, error: null });
-          
-          // Usar window.location.origin asegura que funcione en desarrollo y producción
-          const redirectUrl = `${window.location.origin}/auth/callback`;
-          console.log('Redirect URL for Google OAuth:', redirectUrl);
-          
-          const { data, error } = await supabase.auth.signInWithOAuth({
+          const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-              redirectTo: redirectUrl,
-              queryParams: {
-                prompt: 'select_account' // Para asegurar que siempre muestre el selector
-              }
+              // Supabase redirige aquí después del OAuth; el cliente JS detecta la sesión automáticamente
+              redirectTo: `${window.location.origin}/dashboard`,
+              queryParams: { prompt: 'select_account' },
             },
           });
-          
-          if (error) {
-            console.error('Error iniciando sesión con Google:', error);
-            throw error;
-          }
-          
-          console.log('OAuth iniciado correctamente');
-          // No necesitamos hacer nada más aquí porque la redirección
-          // la maneja el flujo OAuth automáticamente
+          if (error) throw error;
+          // isLoading se resetea cuando onAuthStateChange recibe SIGNED_IN tras la redirección
         } catch (error: any) {
-          console.error('Error en signInWithGoogle:', error);
           set({ error: error.message, isLoading: false });
           throw error;
         }

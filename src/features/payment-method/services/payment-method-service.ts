@@ -11,18 +11,12 @@ export async function getUserPaymentMethods(userId: string): Promise<{ data: Api
     .from('user_payment_methods')
     .select(`
       *,
-      currency:currency_id(id, code, name, symbol)
+      *
     `)
     .eq('user_id', userId)
     .order('name');
   
-  // Transform the data to match the expected structure
-  const transformedData = data?.map(method => ({
-    ...method,
-    currencies: method.currency
-  }));
-  
-  return { data: transformedData || null, error };
+  return { data: data || null, error };
 }
 
 /**
@@ -33,15 +27,10 @@ export async function getPaymentMethodById(id: string): Promise<{ data: ApiPayme
     .from('user_payment_methods')
     .select(`
       *,
-      currency:currency_id(id, code, name, symbol)
+      *
     `)
     .eq('id', id)
     .single();
-  
-  if (data) {
-    // Transform to match expected structure
-    data.currencies = data.currency;
-  }
   
   return { data, error };
 }
@@ -57,14 +46,9 @@ export async function createPaymentMethod(
     .insert(paymentMethod)
     .select(`
       *,
-      currency:currency_id(id, code, name, symbol)
+      *
     `)
     .single();
-  
-  if (data) {
-    // Transform to match expected structure
-    data.currencies = data.currency;
-  }
   
   return { data, error };
 }
@@ -82,14 +66,9 @@ export async function updatePaymentMethod(
     .eq('id', id)
     .select(`
       *,
-      currency:currency_id(id, code, name, symbol)
+      *
     `)
     .single();
-  
-  if (data) {
-    // Transform to match expected structure
-    data.currencies = data.currency;
-  }
   
   return { data, error };
 }
@@ -119,14 +98,9 @@ export async function togglePaymentMethodStatus(
     .eq('id', id)
     .select(`
       *,
-      currency:currency_id(id, code, name, symbol)
+      *
     `)
     .single();
-  
-  if (data) {
-    // Transform to match expected structure
-    data.currencies = data.currency;
-  }
   
   return { data, error };
 }

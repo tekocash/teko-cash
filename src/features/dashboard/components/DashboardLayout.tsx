@@ -1,28 +1,20 @@
-'use client';
 import React, { useState, ReactNode, useEffect } from 'react';
-import { usePathname } from 'next/navigation';
-import Link from 'next/link';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import FloatingActionButton from '@/components/shared/FloatingActionButton';
-import { 
-  Menu, 
-  X, 
-  User, 
-  Bell, 
-  Settings, 
-  LogOut, 
-  ChevronDown, 
-  Home, 
-  BarChart2, 
-  Users, 
-  FileText, 
-  HelpCircle,
+import {
+  Menu,
+  X,
+  User,
+  Bell,
+  Settings,
+  LogOut,
+  ChevronDown,
+  Home,
+  Users,
   DollarSign,
-  CreditCard,
   PieChart,
-  Calendar,
   Plus,
-  Tag
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -37,8 +29,9 @@ interface MenuItem {
 }
 
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
-  const pathname = usePathname();
-  const { user, session, signOut } = useAuthStore();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { user, signOut } = useAuthStore();
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
   const [createMenuOpen, setCreateMenuOpen] = useState<boolean>(false);
@@ -92,26 +85,23 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     if (signOut) {
       await signOut();
     }
-    window.location.href = '/login';
+    navigate('/login', { replace: true });
   };
 
   const menuItems: MenuItem[] = [
     { icon: <Home size={20} />, title: 'Inicio', path: '/dashboard' },
-    { icon: <DollarSign size={20} />, title: 'Gastos e Ingresos', path: '/dashboard/transactions' },
-    { icon: <PieChart size={20} />, title: 'Presupuestos', path: '/dashboard/budgets' },
-    { icon: <Users size={20} />, title: 'Grupos Familiares', path: '/dashboard/family' },
-    { icon: <Tag size={20} />, title: 'Categorías', path: '/dashboard/categories' },
-    { icon: <CreditCard size={20} />, title: 'Métodos de Pago', path: '/dashboard/payment-methods' },
-    { icon: <BarChart2 size={20} />, title: 'Reportes', path: '/dashboard/reports' },
-    { icon: <Settings size={20} />, title: 'Configuración', path: '/dashboard/settings' },
+    { icon: <DollarSign size={20} />, title: 'Gastos e Ingresos', path: '/transactions' },
+    { icon: <PieChart size={20} />, title: 'Presupuestos', path: '/budgets' },
+    { icon: <Users size={20} />, title: 'Grupos Familiares', path: '/family' },
+    { icon: <Settings size={20} />, title: 'Configuración', path: '/settings' },
   ];
 
   // Opciones del menú de crear
   const createOptions = [
-    { icon: <DollarSign size={18} className="text-red-500" />, title: 'Registrar Gasto', path: '/dashboard/transactions/new?type=expense' },
-    { icon: <Plus size={18} className="text-green-500" />, title: 'Registrar Ingreso', path: '/dashboard/transactions/new?type=income' },
-    { icon: <PieChart size={18} className="text-blue-500" />, title: 'Crear Presupuesto', path: '/dashboard/budgets/new' },
-    { icon: <Users size={18} className="text-purple-500" />, title: 'Crear Grupo Familiar', path: '/dashboard/family/new' },
+    { icon: <DollarSign size={18} className="text-red-500" />, title: 'Registrar Gasto', path: '/transactions?type=expense' },
+    { icon: <Plus size={18} className="text-green-500" />, title: 'Registrar Ingreso', path: '/transactions?type=income' },
+    { icon: <PieChart size={18} className="text-blue-500" />, title: 'Crear Presupuesto', path: '/budgets' },
+    { icon: <Users size={18} className="text-purple-500" />, title: 'Crear Grupo Familiar', path: '/family' },
   ];
 
   // Determinar si una ruta está activa
@@ -137,7 +127,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="flex items-center justify-between h-16 px-4 border-b dark:border-gray-700">
-          <Link href="/dashboard" className="text-xl font-bold text-gray-800 dark:text-white">
+          <Link to="/dashboard" className="text-xl font-bold text-gray-800 dark:text-white">
             Teko Cash
           </Link>
           <button onClick={toggleSidebar} className="lg:hidden text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
@@ -152,7 +142,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
               return (
                 <li key={index}>
                   <Link 
-                    href={item.path} 
+                    to={item.path} 
                     className={`flex items-center px-4 py-2 rounded-md group transition-colors ${
                       active 
                         ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' 
@@ -224,7 +214,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                       {createOptions.map((option, index) => (
                         <Link 
                           key={index}
-                          href={option.path} 
+                          to={option.path} 
                           className="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                         >
                           <span className="mr-2">{option.icon}</span>
@@ -257,11 +247,11 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                   {/* Dropdown del perfil */}
                   {profileDropdownOpen && (
                     <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg py-1 z-50 border dark:border-gray-700">
-                      <Link href="/dashboard/profile" className="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <Link to="/dashboard/profile" className="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
                         <User size={16} className="mr-2" />
                         Perfil
                       </Link>
-                      <Link href="/dashboard/settings" className="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <Link to="/dashboard/settings" className="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
                         <Settings size={16} className="mr-2" />
                         Configuración
                       </Link>

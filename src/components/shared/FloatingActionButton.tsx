@@ -1,16 +1,12 @@
-// components/dashboard/FloatingActionButton.tsx
-'use client';
-
 import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { Plus, Minus, X, DollarSign } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Minus } from 'lucide-react';
 
 export default function FloatingActionButton() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Manejar clics fuera para cerrar el menú
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -28,12 +24,12 @@ export default function FloatingActionButton() {
   }, [isOpen]);
 
   const handleAddExpense = () => {
-    router.push('/dashboard/transactions/expense');
+    navigate('/transactions?type=expense');
     setIsOpen(false);
   };
 
   const handleAddIncome = () => {
-    router.push('/dashboard/transactions/income');
+    navigate('/transactions?type=income');
     setIsOpen(false);
   };
 

@@ -1,24 +1,17 @@
-'use client';
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
-import DashboardLayout from './DashboardLayout';
-import { 
-  BarChart, 
-  Users, 
-  DollarSign, 
-  AlertCircle, 
-  TrendingUp, 
-  TrendingDown,
+import {
+  BarChart,
+  Users,
+  DollarSign,
+  AlertCircle,
   RefreshCw,
   Plus,
-  PieChart,
-  Calendar,
   ChevronRight,
-  CreditCard,
   ArrowUpRight,
   ArrowDownRight
 } from 'lucide-react';
-import Link from 'next/link';
 
 // Tipos basados en el modelo de datos compartido
 interface Category {
@@ -232,7 +225,7 @@ export default function Dashboard() {
   };
 
   return (
-    <DashboardLayout>
+    <div>
       {/* Encabezado */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Panel de Control</h1>
@@ -313,7 +306,7 @@ export default function Dashboard() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Transacciones Recientes</h2>
-            <Link href="/dashboard/transactions" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
+            <Link to="/dashboard/transactions" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
               Ver todas <ChevronRight size={16} />
             </Link>
           </div>
@@ -359,7 +352,7 @@ export default function Dashboard() {
           </div>
           <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800 rounded-b-lg">
             <Link 
-              href="/dashboard/expenses/new" 
+              to="/dashboard/expenses/new" 
               className="flex items-center justify-center w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
               <Plus size={18} className="mr-1" />
@@ -372,7 +365,7 @@ export default function Dashboard() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Presupuestos</h2>
-            <Link href="/dashboard/budgets" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
+            <Link to="/dashboard/budgets" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
               Ver todos <ChevronRight size={16} />
             </Link>
           </div>
@@ -416,7 +409,7 @@ export default function Dashboard() {
           </div>
           <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800 rounded-b-lg">
             <Link 
-              href="/dashboard/budgets/new" 
+              to="/dashboard/budgets/new" 
               className="flex items-center justify-center w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
               <Plus size={18} className="mr-1" />
@@ -430,7 +423,7 @@ export default function Dashboard() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 mb-6">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Grupos Familiares</h2>
-          <Link href="/dashboard/family" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
+          <Link to="/dashboard/family" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
             Administrar <ChevronRight size={16} />
           </Link>
         </div>
@@ -452,13 +445,13 @@ export default function Dashboard() {
                   </div>
                   <div className="flex gap-2 mt-4">
                     <Link 
-                      href={`/dashboard/family/${group.id}`} 
+                      to={`/dashboard/family/${group.id}`} 
                       className="text-sm px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 flex-1 text-center"
                     >
                       Ver Detalles
                     </Link>
                     <Link 
-                      href={`/dashboard/family/${group.id}/expenses`} 
+                      to={`/dashboard/family/${group.id}/expenses`} 
                       className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex-1 text-center"
                     >
                       Gastos Compartidos
@@ -477,7 +470,7 @@ export default function Dashboard() {
                 Crea un grupo familiar para compartir gastos con amigos o familiares
               </p>
               <Link
-                href="/dashboard/family/new"
+                to="/dashboard/family/new"
                 className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
               >
                 <Plus size={18} className="mr-2" />
@@ -492,7 +485,7 @@ export default function Dashboard() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Categorías</h2>
-          <Link href="/dashboard/categories" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
+          <Link to="/dashboard/categories" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
             Administrar <ChevronRight size={16} />
           </Link>
         </div>
@@ -529,7 +522,7 @@ export default function Dashboard() {
                 <span className="text-sm font-medium text-gray-900 dark:text-white">Salario</span>
               </div>
               <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center text-center hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
-                <Link href="/dashboard/categories/new" className="flex flex-col items-center">
+                <Link to="/dashboard/categories/new" className="flex flex-col items-center">
                   <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-300 flex items-center justify-center mb-2">
                     <Plus size={20} />
                   </div>
@@ -539,7 +532,7 @@ export default function Dashboard() {
             </div>
             <div className="mt-4 text-center">
               <Link
-                href="/dashboard/categories" 
+                to="/dashboard/categories" 
                 className="text-blue-600 dark:text-blue-400 hover:underline text-sm"
               >
                 Ver todas las categorías
@@ -553,7 +546,7 @@ export default function Dashboard() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 mt-6">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Distribución de Gastos</h2>
-          <Link href="/dashboard/reports" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
+          <Link to="/dashboard/reports" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
             Ver informes <ChevronRight size={16} />
           </Link>
         </div>
@@ -571,7 +564,7 @@ export default function Dashboard() {
                   Aquí irá un gráfico de distribución de gastos
                 </p>
                 <Link
-                  href="/dashboard/reports"
+                  to="/dashboard/reports"
                   className="mt-4 inline-block text-blue-600 dark:text-blue-400 hover:underline text-sm"
                 >
                   Ver análisis detallado
@@ -581,6 +574,6 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-    </DashboardLayout>
+    </div>
   );
 }

@@ -1,14 +1,8 @@
 // src/services/transaction-service.ts
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase/client';
 import { DbTransaction, DbTransactionParticipant } from '@/types/database';
 import { ApiTransaction, ApiTransactionTotals, ApiExpenseDistribution } from '@/types/api';
 import { TransactionFormData } from '@/types/ui';
-
-// Asumimos que estas variables están definidas en tu archivo .env.local
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
  * Obtiene las transacciones del usuario actual

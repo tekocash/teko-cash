@@ -1,8 +1,18 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
-import Layout from './components/shared/PageHeader';
 import AuthGuard from './features/auth/components/AuthGuard';
 import LoadingScreen from './components/shared/LoadingScreen';
+import DashboardLayout from './features/dashboard/components/DashboardLayout';
+
+function ProtectedLayout() {
+  return (
+    <AuthGuard>
+      <DashboardLayout>
+        <Outlet />
+      </DashboardLayout>
+    </AuthGuard>
+  );
+}
 
 // Lazy loading de páginas
 const LoginPage = lazy(() => import('./app/public/auth/Login'));
@@ -29,13 +39,12 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           
           {/* Rutas protegidas */}
-          <Route element={<AuthGuard><Layout title={''} /></AuthGuard>}>
+          <Route element={<ProtectedLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/budgets" element={<BudgetsPage />} />
             <Route path="/family" element={<FamilyPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>
       </Suspense>

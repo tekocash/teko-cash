@@ -1,60 +1,32 @@
-// src/app/(auth)/login/page.tsx
-'use client';
-
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from 'react-hot-toast';
 
 export default function LoginPage() {
-  const router = useRouter();
-  const { signIn, signInWithGoogle, isLoading, session, user } = useAuthStore();
+  const navigate = useNavigate();
+  const { signIn, signInWithGoogle, isLoading } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [redirecting, setRedirecting] = useState(false);
-  
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await signIn(email, password);
       toast.success('Inicio de sesión exitoso');
-      setRedirecting(true);
-      // Redirección simple después de un breve retardo
-      setTimeout(() => {
-        window.location.href = '/dashboard';
-      }, 500);
+      navigate('/dashboard', { replace: true });
     } catch (error: any) {
       toast.error(error.message || 'Error al iniciar sesión');
     }
   };
-  
+
   const handleGoogleSignIn = async () => {
     try {
       await signInWithGoogle();
-      // La redirección la maneja el proceso OAuth
     } catch (error: any) {
       toast.error(error.message || 'Error al iniciar sesión con Google');
     }
   };
-  
-  if (redirecting) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center p-8 bg-white rounded-lg shadow">
-          <div className="animate-spin h-12 w-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-lg">Redirigiendo al dashboard...</p>
-          <button 
-            onClick={() => window.location.href = '/dashboard'} 
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md"
-          >
-            Continuar manualmente
-          </button>
-        </div>
-      </div>
-    );
-  }
-  
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-blue-50 to-white dark:from-gray-900 dark:to-gray-800 p-4">
@@ -134,7 +106,7 @@ export default function LoginPage() {
           <p className="text-sm text-gray-600 dark:text-gray-400">
             ¿No tienes una cuenta?{" "}
             <Link
-              href="/register"
+              to="/register"
               className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
             >
               Regístrate

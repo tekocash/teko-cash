@@ -1,20 +1,14 @@
 // src/services/family-service.ts
-import { createClient } from '@supabase/supabase-js';
-import { 
-  DbFamilyGroup, 
-  DbFamilyGroupParticipant, 
-  DbBalance 
+import { supabase } from '@/lib/supabase/client';
+import {
+  DbFamilyGroup,
+  DbFamilyGroupParticipant,
+  DbBalance
 } from '@/types/database';
-import { 
+import {
   ApiFamilyGroup,
   ApiGroupMemberDetails
 } from '@/types/api';
-
-// Asumimos que estas variables están definidas en tu archivo .env.local
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
  * Obtiene los grupos familiares a los que pertenece un usuario

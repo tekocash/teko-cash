@@ -1,81 +1,55 @@
-// src/components/providers/AuthProvider.tsx
-'use client';
-
 import { useEffect, ReactNode, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from 'react-hot-toast';
+import LoadingScreen from '@/components/shared/LoadingScreen';
 
 interface AuthProviderProps {
   children: ReactNode;
 }
 
+const AUTH_ROUTES = ['/login', '/register', '/reset-password'];
+const PROTECTED_PREFIXES = ['/dashboard', '/transactions', '/budgets', '/family', '/settings'];
+
 export default function AuthProvider({ children }: AuthProviderProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const { user, session, isLoading, refreshSession } = useAuthStore();
-  const [hasPerformedInitialCheck, setHasPerformedInitialCheck] = useState(false);
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const { user, session, refreshSession } = useAuthStore();
+  const [ready, setReady] = useState(false);
 
-  const isAuthRoute = ['/login', '/register', '/reset-password'].includes(pathname);
-  const isProtectedRoute = pathname.startsWith('/dashboard') || 
-                          pathname.startsWith('/transactions') || 
-                          pathname.startsWith('/budgets') || 
-                          pathname.startsWith('/family') || 
-                          pathname.startsWith('/settings');
+  const isAuthRoute = AUTH_ROUTES.includes(pathname);
+  const isProtectedRoute = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
 
   useEffect(() => {
-    // Only perform initial check once
-    if (!hasPerformedInitialCheck) {
-      const performInitialCheck = async () => {
-        try {
-          console.log('Performing initial session check');
-          await refreshSession();
-          setHasPerformedInitialCheck(true);
-        } catch (error) {
-          console.error('Initial session check failed', error);
-          setHasPerformedInitialCheck(true);
-          
-          if (isProtectedRoute) {
-            toast.error('Tu sesión ha expirado');
-            router.push('/login');
-          }
+    const init = async () => {
+      try {
+        await refreshSession();
+      } catch {
+        if (isProtectedRoute) {
+          toast.error('Tu sesión ha expirado');
+          navigate('/login');
         }
-      };
+      } finally {
+        setReady(true);
+      }
+    };
 
-      performInitialCheck();
-    }
-  }, [refreshSession, hasPerformedInitialCheck, isProtectedRoute, router]);
+    init();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    // Handle redirections after initial check
-    if (hasPerformedInitialCheck) {
-      console.log('Checking authentication state:', { 
-        session: !!session, 
-        isAuthRoute, 
-        isProtectedRoute 
-      });
+    if (!ready) return;
 
-      if (!session && isProtectedRoute) {
-        console.log('No session, redirecting to login');
-        router.push(`/login?redirectTo=${pathname}`);
-      } else if (session && isAuthRoute) {
-        console.log('Session exists, redirecting to dashboard');
-        router.push('/dashboard');
-      }
+    if (!session && isProtectedRoute) {
+      navigate(`/login?redirectTo=${pathname}`, { replace: true });
+    } else if (session && isAuthRoute) {
+      navigate('/dashboard', { replace: true });
     }
-  }, [session, hasPerformedInitialCheck, isAuthRoute, isProtectedRoute, router, pathname]);
+  }, [ready, session, isAuthRoute, isProtectedRoute, navigate, pathname]);
 
-  // Loading state
-  if (!hasPerformedInitialCheck || isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-400">Cargando...</p>
-        </div>
-      </div>
-    );
+  if (!ready) {
+    return <LoadingScreen />;
   }
 
-  return children;
+  return <>{children}</>;
 }

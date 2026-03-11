@@ -1,14 +1,11 @@
-'use client';
-
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from 'react-hot-toast';
 import { Eye, EyeOff, Mail, User, Lock } from 'lucide-react';
 
 export default function RegisterPage() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { signUp, signInWithGoogle, isLoading } = useAuthStore();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -28,7 +25,7 @@ export default function RegisterPage() {
     try {
       await signUp(email, password, name);
       toast.success('Cuenta creada con éxito');
-      router.push('/dashboard');
+      navigate('/dashboard', { replace: true });
     } catch (error: any) {
       toast.error(error.message || 'Error al crear cuenta');
     }
@@ -177,7 +174,7 @@ export default function RegisterPage() {
           <p className="text-sm text-gray-600 dark:text-gray-400">
             ¿Ya tienes una cuenta?{" "}
             <Link
-              href="/login"
+              to="/login"
               className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
             >
               Inicia sesión
