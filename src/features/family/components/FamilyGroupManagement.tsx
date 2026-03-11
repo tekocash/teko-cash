@@ -1,38 +1,20 @@
-'use client';
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import DashboardLayout from '../../dashboard/components/DashboardLayout';
-
-import { 
-  Users,
-  UserPlus, 
-  Settings, 
-  MoreVertical, 
-  Edit, 
-  Trash, 
-  X, 
-  Check, 
-  Mail, 
-  Percent,
-  DollarSign,
-  ChevronDown,
-  ChevronUp,
-  User,
-  Share2,
-  Clipboard,
-  AlertCircle,
-  Plus
+import {
+  Users, UserPlus, MoreVertical, Edit, X, Check, User, Share2, AlertCircle, Plus
 } from 'lucide-react';
-import { 
-  FamilyGroup, 
-  GroupMemberDetails,
-  getUserFamilyGroups, 
-  getFamilyGroupMembers, 
-  inviteToFamilyGroup, 
+import {
+  getUserFamilyGroups,
+  getFamilyGroupMembers,
+  inviteToFamilyGroup,
   createFamilyGroup,
   updateMemberPercentage,
   leaveFamilyGroup
-}  from '@/features/family/services/family-service';
+} from '@/features/family/services/family-service';
+import type { ApiFamilyGroup, ApiGroupMemberDetails } from '@/types/api';
+
+type FamilyGroup = ApiFamilyGroup;
+type GroupMemberDetails = ApiGroupMemberDetails;
 
 // Definir el tipo para el método de cálculo
 type CalculationType = 'ratio' | 'fixed';
@@ -86,21 +68,8 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
   
   // Cargar grupos familiares del usuario
   useEffect(() => {
-    if (user?.id) {
-      const loadFamilyGroups = async () => {
-        try {
-          const { data, error } = await getUserFamilyGroups(user.id);
-          if (data && !error) {
-           // setFamilyGroups(data); //REVISAR
-          }
-        } catch (err) {
-          console.error('Error al cargar grupos familiares:', err);
-        }
-      };
-      
-      loadFamilyGroups();
-    }
-  }, [user]);
+    if (user?.id) loadUserGroups();
+  }, [user?.id]);
 
   // Cargar miembros cuando se selecciona un grupo
   useEffect(() => {
@@ -267,7 +236,7 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
   };
 
   return (
-    <DashboardLayout>
+    <div>
       {/* Encabezado */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Grupos Familiares</h1>
@@ -770,6 +739,6 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
           </div>
         </div>
       )}
-    </DashboardLayout>
+    </div>
   );
 }

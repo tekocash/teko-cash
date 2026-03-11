@@ -1,578 +1,311 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
+import { useDashboardData } from '../hooks/useDashboardData';
 import {
-  BarChart,
-  Users,
-  DollarSign,
-  AlertCircle,
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+} from 'chart.js';
+import { Doughnut, Bar } from 'react-chartjs-2';
+import {
+  ArrowUpRight,
+  ArrowDownRight,
+  TrendingUp,
+  Wallet,
   RefreshCw,
   Plus,
   ChevronRight,
-  ArrowUpRight,
-  ArrowDownRight
+  AlertCircle,
 } from 'lucide-react';
 
-// Tipos basados en el modelo de datos compartido
-interface Category {
-  id: string;
-  name: string;
-  categoryType: 'expense' | 'income';
-  parentId: string | null;
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
+
+const fmt = (n: number) =>
+  new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
+
+const fmtDate = (d: string) => {
+  const [y, m, day] = d.split('-');
+  return `${day}/${m}/${y}`;
+};
+
+function SkeletonCard() {
+  return (
+    <div className="rounded-2xl p-5 bg-white/60 dark:bg-gray-800/60 animate-pulse border border-gray-100 dark:border-gray-700">
+      <div className="h-3 w-24 bg-gray-200 dark:bg-gray-700 rounded mb-3" />
+      <div className="h-7 w-32 bg-gray-200 dark:bg-gray-700 rounded mb-2" />
+      <div className="h-2 w-16 bg-gray-100 dark:bg-gray-700 rounded" />
+    </div>
+  );
 }
 
-interface Transaction {
-  id: string;
-  direction: 'income' | 'expense';
-  amount: number;
-  date: string;
-  categoryId: string;
-  concepto: string;
-  comercio?: string;
-}
-
-interface FamilyGroup {
-  id: string;
-  name: string;
-  memberCount: number;
-}
-
-interface Budget {
-  id: string;
-  categoryId: string;
-  categoryName: string;
-  plannedAmount: number;
-  spentAmount: number; // Calculado a partir de las transacciones
-  month: string;
-  percentage: number; // Porcentaje de uso (spentAmount / plannedAmount)
-}
-
-// Componente principal
 export default function Dashboard() {
   const { user } = useAuthStore();
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
-  const [currentBudgets, setCurrentBudgets] = useState<Budget[]>([]);
-  const [familyGroups, setFamilyGroups] = useState<FamilyGroup[]>([]);
-  const [totals, setTotals] = useState({
-    incomes: 0,
-    expenses: 0,
-    balance: 0,
-    pending: 0,
-  });
+  const navigate = useNavigate();
+  const { isLoading, recentTx, totals, categories, monthly, error, reload } = useDashboardData();
 
-  // Datos de ejemplo para simular la carga desde la base de datos
-  const loadMockData = () => {
-    // Categorías de ejemplo
-    const mockCategories: Record<string, Category> = {
-      'cat1': { id: 'cat1', name: 'Alimentación', categoryType: 'expense', parentId: null },
-      'cat2': { id: 'cat2', name: 'Transporte', categoryType: 'expense', parentId: null },
-      'cat3': { id: 'cat3', name: 'Vivienda', categoryType: 'expense', parentId: null },
-      'cat4': { id: 'cat4', name: 'Salario', categoryType: 'income', parentId: null },
-      'cat5': { id: 'cat5', name: 'Freelance', categoryType: 'income', parentId: null },
-    };
-
-    // Transacciones recientes
-    const mockTransactions: Transaction[] = [
-      { 
-        id: 'tr1', 
-        direction: 'expense', 
-        amount: 45.50, 
-        date: '2025-03-15', 
-        categoryId: 'cat1', 
-        concepto: 'Supermercado',
-        comercio: 'Carrefour'
-      },
-      { 
-        id: 'tr2', 
-        direction: 'expense', 
-        amount: 25.00, 
-        date: '2025-03-14', 
-        categoryId: 'cat2', 
-        concepto: 'Gasolina',
-        comercio: 'Shell'
-      },
-      { 
-        id: 'tr3', 
-        direction: 'income', 
-        amount: 1200.00, 
-        date: '2025-03-01', 
-        categoryId: 'cat4', 
-        concepto: 'Sueldo Marzo'
-      },
-      { 
-        id: 'tr4', 
-        direction: 'income', 
-        amount: 350.00, 
-        date: '2025-03-10', 
-        categoryId: 'cat5', 
-        concepto: 'Proyecto freelance'
-      },
-      { 
-        id: 'tr5', 
-        direction: 'expense', 
-        amount: 600.00, 
-        date: '2025-03-05', 
-        categoryId: 'cat3', 
-        concepto: 'Alquiler Marzo'
-      },
-    ];
-
-    // Presupuestos actuales
-    const mockBudgets: Budget[] = [
-      {
-        id: 'bud1',
-        categoryId: 'cat1',
-        categoryName: 'Alimentación',
-        plannedAmount: 300,
-        spentAmount: 185.75,
-        month: '2025-03',
-        percentage: 62
-      },
-      {
-        id: 'bud2',
-        categoryId: 'cat2',
-        categoryName: 'Transporte',
-        plannedAmount: 150,
-        spentAmount: 125.50,
-        month: '2025-03',
-        percentage: 84
-      },
-      {
-        id: 'bud3',
-        categoryId: 'cat3',
-        categoryName: 'Vivienda',
-        plannedAmount: 650,
-        spentAmount: 600,
-        month: '2025-03',
-        percentage: 92
-      },
-    ];
-
-    // Grupos familiares
-    const mockFamilyGroups: FamilyGroup[] = [
-      {
-        id: 'fg1',
-        name: 'Familia',
-        memberCount: 4
-      },
-      {
-        id: 'fg2',
-        name: 'Compañeros de piso',
-        memberCount: 3
-      }
-    ];
-
-    // Totales calculados
-    const mockTotals = {
-      incomes: mockTransactions
-        .filter(t => t.direction === 'income')
-        .reduce((sum, t) => sum + t.amount, 0),
-      expenses: mockTransactions
-        .filter(t => t.direction === 'expense')
-        .reduce((sum, t) => sum + t.amount, 0),
-      balance: 0,
-      pending: 150.25 // Ejemplo de pagos pendientes
-    };
-    mockTotals.balance = mockTotals.incomes - mockTotals.expenses;
-
-    // Actualizar estados
-    setRecentTransactions(mockTransactions);
-    setCurrentBudgets(mockBudgets);
-    setFamilyGroups(mockFamilyGroups);
-    setTotals(mockTotals);
-    setIsLoading(false);
+  const doughnutData = {
+    labels: categories.map(c => c.name),
+    datasets: [{
+      data: categories.map(c => c.amount),
+      backgroundColor: categories.map(c => c.color),
+      borderWidth: 2,
+      borderColor: 'transparent',
+    }],
   };
 
-  // Cargar datos al montar el componente
-  useEffect(() => {
-    // Simulación de carga de datos
-    const timeout = setTimeout(() => {
-      loadMockData();
-    }, 1000);
-
-    return () => clearTimeout(timeout);
-  }, []);
-
-  // Función para formatear montos de dinero
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('es-ES', {
-      style: 'currency',
-      currency: 'EUR'
-    }).format(amount);
+  const barData = {
+    labels: monthly.map(m => m.month),
+    datasets: [
+      {
+        label: 'Ingresos',
+        data: monthly.map(m => m.incomes),
+        backgroundColor: '#10b981',
+        borderRadius: 6,
+      },
+      {
+        label: 'Gastos',
+        data: monthly.map(m => m.expenses),
+        backgroundColor: '#f43f5e',
+        borderRadius: 6,
+      },
+    ],
   };
 
-  // Función para formatear fechas
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    }).format(date);
+  const barOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { position: 'top' as const } },
+    scales: {
+      x: { grid: { display: false } },
+      y: { grid: { color: 'rgba(0,0,0,0.05)' } },
+    },
   };
 
-  // Función para obtener la categoría de una transacción
-  const getCategoryName = (categoryId: string): string => {
-    const mockCategories: Record<string, Category> = {
-      'cat1': { id: 'cat1', name: 'Alimentación', categoryType: 'expense', parentId: null },
-      'cat2': { id: 'cat2', name: 'Transporte', categoryType: 'expense', parentId: null },
-      'cat3': { id: 'cat3', name: 'Vivienda', categoryType: 'expense', parentId: null },
-      'cat4': { id: 'cat4', name: 'Salario', categoryType: 'income', parentId: null },
-      'cat5': { id: 'cat5', name: 'Freelance', categoryType: 'income', parentId: null },
-    };
-    return mockCategories[categoryId]?.name || 'Sin categoría';
+  const doughnutOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+    },
+    cutout: '70%',
+  };
+
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Buenos días';
+    if (h < 18) return 'Buenas tardes';
+    return 'Buenas noches';
   };
 
   return (
-    <div>
-      {/* Encabezado */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Panel de Control</h1>
-        <p className="text-gray-600 dark:text-gray-300">
-          Bienvenido, {user?.display_name || user?.email || 'Usuario'}
-        </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            {greeting()}, {user?.display_name || user?.email?.split('@')[0] || 'Usuario'} 👋
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+            Resumen del mes actual
+          </p>
+        </div>
+        <button
+          onClick={reload}
+          disabled={isLoading}
+          className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40"
+        >
+          <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
+        </button>
       </div>
 
-      {/* Tarjetas de resumen financiero */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {/* Ingresos */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-gray-500 dark:text-gray-400 font-medium">Ingresos</h3>
-            <div className="p-2 rounded-full bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-300">
-              <ArrowUpRight size={20} />
-            </div>
-          </div>
-          <p className="text-2xl font-semibold text-gray-800 dark:text-white">
-            {isLoading ? '...' : formatCurrency(totals.incomes)}
-          </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Este mes</p>
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          <AlertCircle size={16} />
+          {error}
         </div>
+      )}
 
-        {/* Gastos */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-gray-500 dark:text-gray-400 font-medium">Gastos</h3>
-            <div className="p-2 rounded-full bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-300">
-              <ArrowDownRight size={20} />
-            </div>
-          </div>
-          <p className="text-2xl font-semibold text-gray-800 dark:text-white">
-            {isLoading ? '...' : formatCurrency(totals.expenses)}
-          </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Este mes</p>
-        </div>
-
-        {/* Balance */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-gray-500 dark:text-gray-400 font-medium">Balance</h3>
-            <div className={`p-2 rounded-full ${
-              totals.balance >= 0 
-                ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300'
-                : 'bg-yellow-100 dark:bg-yellow-900 text-yellow-600 dark:text-yellow-300'
-            }`}>
-              <DollarSign size={20} />
-            </div>
-          </div>
-          <p className={`text-2xl font-semibold ${
-            totals.balance >= 0 
-              ? 'text-blue-600 dark:text-blue-300'
-              : 'text-yellow-600 dark:text-yellow-300'
-          }`}>
-            {isLoading ? '...' : formatCurrency(totals.balance)}
-          </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Disponible</p>
-        </div>
-
-        {/* Pendientes */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-gray-500 dark:text-gray-400 font-medium">Pendientes</h3>
-            <div className="p-2 rounded-full bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-300">
-              <AlertCircle size={20} />
-            </div>
-          </div>
-          <p className="text-2xl font-semibold text-gray-800 dark:text-white">
-            {isLoading ? '...' : formatCurrency(totals.pending)}
-          </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Por pagar</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Transacciones recientes */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Transacciones Recientes</h2>
-            <Link to="/dashboard/transactions" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
-              Ver todas <ChevronRight size={16} />
-            </Link>
-          </div>
-          <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {isLoading ? (
-              <div className="flex justify-center items-center h-40">
-                <RefreshCw size={24} className="animate-spin text-gray-400" />
-              </div>
-            ) : (
-              recentTransactions.length > 0 ? (
-                recentTransactions.map(transaction => (
-                  <div key={transaction.id} className="px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        transaction.direction === 'income' 
-                          ? 'bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-300' 
-                          : 'bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-300'
-                      }`}>
-                        {transaction.direction === 'income' ? <ArrowUpRight size={20} /> : <ArrowDownRight size={20} />}
-                      </div>
-                      <div className="ml-4">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">{transaction.concepto}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {getCategoryName(transaction.categoryId)} • {formatDate(transaction.date)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className={`font-medium ${
-                      transaction.direction === 'income' 
-                        ? 'text-green-600 dark:text-green-400' 
-                        : 'text-red-600 dark:text-red-400'
-                    }`}>
-                      {transaction.direction === 'income' ? '+' : '-'}{formatCurrency(transaction.amount)}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
-                  No hay transacciones recientes
-                </div>
-              )
-            )}
-          </div>
-          <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800 rounded-b-lg">
-            <Link 
-              to="/dashboard/expenses/new" 
-              className="flex items-center justify-center w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-            >
-              <Plus size={18} className="mr-1" />
-              Añadir Transacción
-            </Link>
-          </div>
-        </div>
-
-        {/* Presupuestos */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Presupuestos</h2>
-            <Link to="/dashboard/budgets" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
-              Ver todos <ChevronRight size={16} />
-            </Link>
-          </div>
-          <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {isLoading ? (
-              <div className="flex justify-center items-center h-40">
-                <RefreshCw size={24} className="animate-spin text-gray-400" />
-              </div>
-            ) : (
-              currentBudgets.length > 0 ? (
-                currentBudgets.map(budget => (
-                  <div key={budget.id} className="px-6 py-4">
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{budget.categoryName}</span>
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">
-                        {formatCurrency(budget.spentAmount)} / {formatCurrency(budget.plannedAmount)}
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mb-1">
-                      <div 
-                        className={`h-2.5 rounded-full ${
-                          budget.percentage > 90 ? 'bg-red-600' : 
-                          budget.percentage > 75 ? 'bg-yellow-500' : 
-                          'bg-green-600'
-                        }`} 
-                        style={{ width: `${Math.min(budget.percentage, 100)}%` }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-                      <span>{budget.percentage}% usado</span>
-                      <span>Resta: {formatCurrency(budget.plannedAmount - budget.spentAmount)}</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
-                  No hay presupuestos configurados
-                </div>
-              )
-            )}
-          </div>
-          <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800 rounded-b-lg">
-            <Link 
-              to="/dashboard/budgets/new" 
-              className="flex items-center justify-center w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-            >
-              <Plus size={18} className="mr-1" />
-              Crear Presupuesto
-            </Link>
-          </div>
-        </div>
-      </div>
-      
-      {/* Grupos Familiares */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 mb-6">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Grupos Familiares</h2>
-          <Link to="/dashboard/family" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
-            Administrar <ChevronRight size={16} />
-          </Link>
-        </div>
-        
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {isLoading ? (
-          <div className="flex justify-center items-center h-40">
-            <RefreshCw size={24} className="animate-spin text-gray-400" />
-          </div>
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
-          familyGroups.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
-              {familyGroups.map((group) => (
-                <div key={group.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-medium text-gray-900 dark:text-white">{group.name}</h3>
-                    <div className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300 text-xs px-2 py-1 rounded-full">
-                      {group.memberCount} miembros
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    <Link 
-                      to={`/dashboard/family/${group.id}`} 
-                      className="text-sm px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 flex-1 text-center"
-                    >
-                      Ver Detalles
-                    </Link>
-                    <Link 
-                      to={`/dashboard/family/${group.id}/expenses`} 
-                      className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex-1 text-center"
-                    >
-                      Gastos Compartidos
-                    </Link>
-                  </div>
+          <>
+            {/* Ingresos */}
+            <div className="rounded-2xl p-5 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-emerald-100 text-sm font-medium">Ingresos</span>
+                <div className="p-1.5 bg-white/20 rounded-lg">
+                  <ArrowUpRight size={16} />
                 </div>
-              ))}
+              </div>
+              <p className="text-xl font-bold truncate">{fmt(totals.incomes)}</p>
+              <p className="text-emerald-100 text-xs mt-1">Este mes</p>
+            </div>
+
+            {/* Gastos */}
+            <div className="rounded-2xl p-5 bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-lg shadow-rose-200 dark:shadow-rose-900/30">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-rose-100 text-sm font-medium">Gastos</span>
+                <div className="p-1.5 bg-white/20 rounded-lg">
+                  <ArrowDownRight size={16} />
+                </div>
+              </div>
+              <p className="text-xl font-bold truncate">{fmt(totals.expenses)}</p>
+              <p className="text-rose-100 text-xs mt-1">Este mes</p>
+            </div>
+
+            {/* Balance */}
+            <div className={`rounded-2xl p-5 text-white shadow-lg ${
+              totals.balance >= 0
+                ? 'bg-gradient-to-br from-blue-500 to-indigo-600 shadow-blue-200 dark:shadow-blue-900/30'
+                : 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-200 dark:shadow-amber-900/30'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-blue-100 text-sm font-medium">Balance</span>
+                <div className="p-1.5 bg-white/20 rounded-lg">
+                  <Wallet size={16} />
+                </div>
+              </div>
+              <p className="text-xl font-bold truncate">{fmt(totals.balance)}</p>
+              <p className="text-blue-100 text-xs mt-1">Disponible</p>
+            </div>
+
+            {/* Tasa ahorro */}
+            <div className="rounded-2xl p-5 bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-lg shadow-violet-200 dark:shadow-violet-900/30">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-violet-100 text-sm font-medium">Ahorro</span>
+                <div className="p-1.5 bg-white/20 rounded-lg">
+                  <TrendingUp size={16} />
+                </div>
+              </div>
+              <p className="text-xl font-bold">{totals.savingsRate}%</p>
+              <p className="text-violet-100 text-xs mt-1">Del ingreso</p>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Charts row */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        {/* Donut chart */}
+        <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700 shadow-sm">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Gastos por categoría</h2>
+          {isLoading ? (
+            <div className="h-48 flex items-center justify-center">
+              <RefreshCw size={24} className="animate-spin text-gray-300" />
+            </div>
+          ) : categories.length === 0 ? (
+            <div className="h-48 flex flex-col items-center justify-center text-gray-400 text-sm">
+              <Wallet size={32} className="mb-2 opacity-40" />
+              Sin gastos este mes
             </div>
           ) : (
-            <div className="px-6 py-12 text-center">
-              <div className="mb-4">
-                <Users size={48} className="mx-auto text-gray-400" />
+            <div className="flex gap-4">
+              <div className="relative h-36 w-36 flex-shrink-0">
+                <Doughnut data={doughnutData} options={doughnutOptions} />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Sin grupos familiares</h3>
-              <p className="text-gray-500 dark:text-gray-400 mb-6">
-                Crea un grupo familiar para compartir gastos con amigos o familiares
-              </p>
-              <Link
-                to="/dashboard/family/new"
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                <Plus size={18} className="mr-2" />
-                Crear Grupo Familiar
-              </Link>
-            </div>
-          )
-        )}
-      </div>
-      
-      {/* Categorías personalizadas */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Categorías</h2>
-          <Link to="/dashboard/categories" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
-            Administrar <ChevronRight size={16} />
-          </Link>
-        </div>
-        
-        {isLoading ? (
-          <div className="flex justify-center items-center h-40">
-            <RefreshCw size={24} className="animate-spin text-gray-400" />
-          </div>
-        ) : (
-          <div className="p-6">
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center text-center">
-                <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-300 flex items-center justify-center mb-2">
-                  <span className="text-lg">🍔</span>
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Alimentación</span>
-              </div>
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center text-center">
-                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 flex items-center justify-center mb-2">
-                  <span className="text-lg">🚗</span>
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Transporte</span>
-              </div>
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center text-center">
-                <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900 text-amber-600 dark:text-amber-300 flex items-center justify-center mb-2">
-                  <span className="text-lg">🏠</span>
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Vivienda</span>
-              </div>
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center text-center">
-                <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-300 flex items-center justify-center mb-2">
-                  <span className="text-lg">💰</span>
-                </div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">Salario</span>
-              </div>
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex flex-col items-center justify-center text-center hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
-                <Link to="/dashboard/categories/new" className="flex flex-col items-center">
-                  <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-300 flex items-center justify-center mb-2">
-                    <Plus size={20} />
+              <div className="flex flex-col gap-1.5 overflow-y-auto max-h-36 flex-1 min-w-0">
+                {categories.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
+                    <span className="text-xs text-gray-600 dark:text-gray-400 truncate flex-1">{c.name}</span>
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300 flex-shrink-0">{c.percentage}%</span>
                   </div>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">Añadir</span>
-                </Link>
+                ))}
               </div>
             </div>
-            <div className="mt-4 text-center">
-              <Link
-                to="/dashboard/categories" 
-                className="text-blue-600 dark:text-blue-400 hover:underline text-sm"
-              >
-                Ver todas las categorías
-              </Link>
+          )}
+        </div>
+
+        {/* Bar chart */}
+        <div className="lg:col-span-3 bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-700 shadow-sm">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Últimos 6 meses</h2>
+          {isLoading ? (
+            <div className="h-48 flex items-center justify-center">
+              <RefreshCw size={24} className="animate-spin text-gray-300" />
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="h-48">
+              <Bar data={barData} options={barOptions} />
+            </div>
+          )}
+        </div>
       </div>
-      
-      {/* Distribución de gastos (gráfico) */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 mt-6">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-white">Distribución de Gastos</h2>
-          <Link to="/dashboard/reports" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center text-sm">
-            Ver informes <ChevronRight size={16} />
+
+      {/* Recent transactions */}
+      <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Transacciones recientes</h2>
+          <Link
+            to="/transactions"
+            className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+          >
+            Ver todas <ChevronRight size={14} />
           </Link>
         </div>
-        
+
         {isLoading ? (
-          <div className="flex justify-center items-center h-60">
-            <RefreshCw size={24} className="animate-spin text-gray-400" />
+          <div className="divide-y divide-gray-50 dark:divide-gray-700">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-5 py-3 animate-pulse">
+                <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-700 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="h-3 w-32 bg-gray-100 dark:bg-gray-700 rounded mb-1.5" />
+                  <div className="h-2 w-20 bg-gray-100 dark:bg-gray-700 rounded" />
+                </div>
+                <div className="h-4 w-20 bg-gray-100 dark:bg-gray-700 rounded" />
+              </div>
+            ))}
+          </div>
+        ) : recentTx.length === 0 ? (
+          <div className="py-12 text-center text-gray-400 text-sm">
+            No hay transacciones este mes
           </div>
         ) : (
-          <div className="p-6">
-            <div className="h-60 flex items-center justify-center bg-gray-100 dark:bg-gray-700 rounded-lg">
-              <div className="text-center">
-                <BarChart size={48} className="mx-auto text-gray-400 mb-2" />
-                <p className="text-gray-500 dark:text-gray-400">
-                  Aquí irá un gráfico de distribución de gastos
-                </p>
-                <Link
-                  to="/dashboard/reports"
-                  className="mt-4 inline-block text-blue-600 dark:text-blue-400 hover:underline text-sm"
-                >
-                  Ver análisis detallado
-                </Link>
+          <div className="divide-y divide-gray-50 dark:divide-gray-700">
+            {recentTx.map(tx => (
+              <div key={tx.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  tx.direction === 'income'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'
+                }`}>
+                  {tx.direction === 'income' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                    {tx.concepto}
+                  </p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                    {(tx.category as any)?.name || tx.comercio || 'Sin categoría'} · {fmtDate(tx.date)}
+                  </p>
+                </div>
+                <span className={`text-sm font-semibold flex-shrink-0 ${
+                  tx.direction === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                }`}>
+                  {tx.direction === 'income' ? '+' : '-'}{fmt(tx.amount)}
+                </span>
               </div>
-            </div>
+            ))}
           </div>
         )}
+
+        {/* Add transaction CTA */}
+        <div className="px-5 py-3 bg-gray-50 dark:bg-gray-800/80 border-t border-gray-100 dark:border-gray-700">
+          <button
+            onClick={() => navigate('/transactions?action=new&type=expense')}
+            className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
+          >
+            <Plus size={16} />
+            Nueva transacción
+          </button>
+        </div>
       </div>
     </div>
   );

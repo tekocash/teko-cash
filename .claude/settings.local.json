@@ -5,7 +5,9 @@
       "Bash(findstr :5173)",
       "Bash(wc -l /c/Users/betha/teko-cash-claude/teko-cash/src/features/**/services/*.ts /c/Users/betha/teko-cash-claude/teko-cash/src/features/**/service/*.ts)",
       "Bash(printf 'VITE_SUPABASE_URL=https://ptvfpwfxnfhqdsuvvdbb.supabase.co\\\\nVITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB0dmZwd2Z4bmZocWRzdXZ2ZGJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxODcxMDYsImV4cCI6MjA4ODc2MzEwNn0.vrsvGEuEcARB9JkxPYyNqcgxejq3BrxV87gJVlnUt6A\\\\n')",
-      "Bash(\"/c/Users/betha/teko-cash-claude/teko-cash/.env\")"
+      "Bash(\"/c/Users/betha/teko-cash-claude/teko-cash/.env\")",
+      "Bash(find /c/Users/betha/teko-cash-claude/teko-cash/src -type f -name *.ts -o -name *.tsx)",
+      "Bash(\"c:\\\\Users\\\\betha\\\\teko-cash-claude\\\\teko-cash\\\\src\\\\features\\\\dashboard\\\\components\\\\Dashboard.tsx\")"
     ]
   }
 }

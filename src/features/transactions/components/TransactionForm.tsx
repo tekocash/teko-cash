@@ -9,7 +9,8 @@ import { ArrowLeft } from 'lucide-react';
 import { createTransaction } from '@/features/transactions/service/transaction-service';
 import { getUserCategories } from '@/features/categories/services/category-service';
 import { getUserFamilyGroups } from '@/features/family/services/family-service';
-import { getUserPaymentMethods } from '@/features/payment-method/services/payment-method-service';
+import { getUserPaymentMethods, getAvailableCurrencies } from '@/features/payment-method/services/payment-method-service';
+import { supabase } from '@/lib/supabase/client';
 import { useAuthStore } from '@/store/auth-store';
 
 // Importar adaptadores
@@ -62,13 +63,6 @@ interface TransactionFormProps {
   initialDirection?: TransactionDirection;
 }
 
-// Datos de ejemplo para tipos de transacción
-// Esto debería venir de una consulta a Supabase en una implementación real
-const mockTransactionTypes: TransactionType[] = [
-  { id: 'tt1', name: 'Fijo' },
-  { id: 'tt2', name: 'Variable' },
-  { id: 'tt3', name: 'Ocasional' },
-];
 
 /**
  * Componente principal para el formulario de creación de transacciones
@@ -89,7 +83,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
   const [useGroupRatio, setUseGroupRatio] = useState<boolean>(true);
   const [paymentMethodId, setPaymentMethodId] = useState<string>('');
   const [transactionTypeId, setTransactionTypeId] = useState<string>('');
-  const [currencyId, setCurrencyId] = useState<string>('cur3'); // PYG por defecto 
+  const [currencyId, setCurrencyId] = useState<string>('');
   const [receipt, setReceipt] = useState<File | null>(null);
   const [additionalInfo, setAdditionalInfo] = useState<string>('');
   const [periodicity, setPeriodicity] = useState<PeriodicityType>(null);
@@ -106,12 +100,8 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Monedas disponibles
-  const currencies: Currency[] = [
-    { id: 'cur3', code: 'PYG', name: 'Guaraní paraguayo', symbol: '₲' },
-    { id: 'cur2', code: 'USD', name: 'Dólar estadounidense', symbol: '$' },
-    { id: 'cur1', code: 'EUR', name: 'Euro', symbol: '€' },
-  ];
+  const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [transactionTypes, setTransactionTypes] = useState<TransactionType[]>([]);
 
   // Cargar datos al montar el componente
   useEffect(() => {
@@ -155,18 +145,39 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
         setPaymentMethods(uiMethods);
       }
       
-      // En una implementación real, cargaríamos los comercios recientes desde Supabase
-      // Por ahora, usamos datos de ejemplo
-      setRecentCommerces([
-        'Mercadona', 
-        'ZARA', 
-        'MediaMarkt', 
-        'El Corte Inglés',
-        'Amazon',
-        'Netflix',
-        'Uber',
-        'Cafetería Central'
-      ]);
+      // Cargar monedas reales desde Supabase
+      const { data: currenciesData } = await getAvailableCurrencies();
+      if (currenciesData && currenciesData.length > 0) {
+        const uiCurrencies: Currency[] = currenciesData.map((c: any) => ({
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          symbol: c.symbol,
+        }));
+        setCurrencies(uiCurrencies);
+        // Default a PYG, si no existe usar la primera disponible
+        const pyg = uiCurrencies.find(c => c.code === 'PYG');
+        setCurrencyId(pyg ? pyg.id : uiCurrencies[0].id);
+      }
+
+      // Cargar tipos de transacción reales desde Supabase
+      const { data: typesData } = await supabase.from('transaction_types').select('id, name').order('name');
+      if (typesData) {
+        setTransactionTypes(typesData.map((t: any) => ({ id: t.id, name: t.name })));
+      }
+
+      // Comercios recientes
+      const { data: recentTx } = await supabase
+        .from('transactions')
+        .select('comercio')
+        .eq('user_id', user.id)
+        .not('comercio', 'is', null)
+        .order('date', { ascending: false })
+        .limit(20);
+      if (recentTx) {
+        const unique = [...new Set(recentTx.map((t: any) => t.comercio).filter(Boolean))];
+        setRecentCommerces(unique.slice(0, 8));
+      }
     } catch (err: any) {
       console.error('Error al cargar datos:', err);
       setErrorMessage(`Error al cargar datos: ${err.message || 'Error desconocido'}`);
@@ -401,7 +412,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
   
                 {/* Tipo de transacción */}
                 <TransactionTypeSelector
-                  transactionTypes={mockTransactionTypes}
+                  transactionTypes={transactionTypes}
                   selectedTypeId={transactionTypeId}
                   onTypeChange={setTransactionTypeId}
                 />
