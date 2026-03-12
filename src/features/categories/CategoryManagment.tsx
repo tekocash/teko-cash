@@ -1,7 +1,5 @@
-'use client';
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import DashboardLayout from '../dashboard/components/DashboardLayout';
 import { Plus, Edit, Trash, X, Check, Filter, Search, ChevronDown, Minus } from 'lucide-react';
 import {
   getCategoriesWithPreferences,
@@ -9,9 +7,10 @@ import {
   updateCategory,
   deleteCategory,
   setUserCategoryPreference,
-  CategoryWithPreferences
 } from '@/features/categories/services/category-service';
-import { getUserFamilyGroups, FamilyGroup } from '@/features/family/services/family-service';
+import { ApiCategoryWithPreferences as CategoryWithPreferences } from '@/types/api';
+import { getUserFamilyGroups } from '@/features/family/services/family-service';
+import type { ApiFamilyGroup as FamilyGroup } from '@/types/api';
 
 // Paleta de colores predefinidos
 const COLOR_PALETTE = [
@@ -59,11 +58,15 @@ export default function CategoryManagement() {
   });
   
   // Estados para filtros
-  const [activeFilter, setActiveFilter] = useState<'all' | 'expense' | 'income' | 'personal' | 'family'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'expense' | 'income' | 'personal' | 'family' | 'global'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
+  // Modal de confirmación de eliminación
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
+
   // Mensaje de éxito/error
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -101,19 +104,24 @@ export default function CategoryManagement() {
     }
   };
 
-  // Filtrar categorías según criterios
-  const filteredCategories = categories.filter(cat => {
-    // Filtrar por tipo (gasto/ingreso) y ámbito (personal/familiar)
-    if (activeFilter === 'expense' && cat.category_type !== 'expense') return false;
-    if (activeFilter === 'income' && cat.category_type !== 'income') return false;
-    if (activeFilter === 'personal' && cat.family_group_id !== null) return false;
-    if (activeFilter === 'family' && cat.family_group_id === null) return false;
-    
-    // Filtrar por texto de búsqueda
-    if (searchQuery && !cat.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    
-    return true;
-  });
+  // Filtrar y ordenar categorías: personales primero, luego globales
+  const filteredCategories = categories
+    .filter(cat => {
+      if (activeFilter === 'expense'  && cat.category_type !== 'expense') return false;
+      if (activeFilter === 'income'   && cat.category_type !== 'income')  return false;
+      if (activeFilter === 'personal' && cat.user_id !== user?.id)        return false;
+      if (activeFilter === 'family'   && cat.family_group_id === null)    return false;
+      if (activeFilter === 'global'   && cat.user_id !== null)            return false;
+      if (searchQuery && !cat.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      // Personales del usuario actual → primero
+      const aScore = a.user_id === user?.id ? 0 : a.family_group_id ? 1 : 2;
+      const bScore = b.user_id === user?.id ? 0 : b.family_group_id ? 1 : 2;
+      if (aScore !== bScore) return aScore - bScore;
+      return a.name.localeCompare(b.name);
+    });
 
   // Manejar creación de categoría
   const handleCreateCategory = async () => {
@@ -189,16 +197,21 @@ export default function CategoryManagement() {
     }
   };
 
-  // Manejar eliminación de categoría
-  const handleDeleteCategory = async (categoryId: string) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar esta categoría?')) return;
-    
+  // Pedir confirmación de eliminación
+  const confirmDelete = (categoryId: string, name: string) => {
+    setDeleteConfirmId(categoryId);
+    setDeleteConfirmName(name);
+  };
+
+  // Ejecutar eliminación tras confirmación
+  const handleDeleteCategory = async () => {
+    if (!deleteConfirmId) return;
+    const id = deleteConfirmId;
+    setDeleteConfirmId(null);
     try {
-      const { error } = await deleteCategory(categoryId);
-      
+      const { error } = await deleteCategory(id);
       if (error) throw error;
-      
-      loadCategories(); // Recargar lista de categorías
+      loadCategories();
       setSuccessMessage('Categoría eliminada con éxito');
     } catch (err: any) {
       setErrorMessage(`Error al eliminar categoría: ${err.message}`);
@@ -258,7 +271,7 @@ export default function CategoryManagement() {
   };
 
   return (
-    <DashboardLayout>
+    <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Gestión de Categorías</h1>
@@ -267,7 +280,6 @@ export default function CategoryManagement() {
           </p>
         </div>
         
-        {!formOpen && (
           <button
             onClick={() => {
               resetForm();
@@ -278,7 +290,6 @@ export default function CategoryManagement() {
             <Plus size={18} className="mr-1" />
             <span>Nueva Categoría</span>
           </button>
-        )}
       </div>
 
       {/* Mensajes de éxito/error */}
@@ -312,13 +323,20 @@ export default function CategoryManagement() {
         </div>
       )}
 
-      {/* Formulario de crear/editar categoría */}
+      {/* Modal de crear/editar categoría */}
       {formOpen && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6 border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-            {editingCategoryId ? 'Editar Categoría' : 'Nueva Categoría'}
-          </h2>
-          
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
+              {editingCategoryId ? 'Editar Categoría' : 'Nueva Categoría'}
+            </h2>
+            <button onClick={resetForm} className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+              <X size={20} />
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Nombre de categoría */}
             <div>
@@ -516,13 +534,41 @@ export default function CategoryManagement() {
              onClick={editingCategoryId ? handleUpdateCategory : handleCreateCategory}
              disabled={!formData.name.trim()}
              className={`px-4 py-2 rounded-md text-white ${
-               formData.name.trim() 
-                 ? 'bg-blue-600 hover:bg-blue-700' 
+               formData.name.trim()
+                 ? 'bg-blue-600 hover:bg-blue-700'
                  : 'bg-blue-400 cursor-not-allowed'
              }`}
            >
              {editingCategoryId ? 'Actualizar' : 'Crear'} Categoría
            </button>
+         </div>
+       </div>
+          </div>
+        </div>
+     )}
+
+     {/* Modal de confirmación de eliminación */}
+     {deleteConfirmId && (
+       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6">
+           <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-2">Eliminar categoría</h2>
+           <p className="text-gray-600 dark:text-gray-300 mb-6">
+             ¿Estás seguro de que deseas eliminar <strong>"{deleteConfirmName}"</strong>? Esta acción no se puede deshacer.
+           </p>
+           <div className="flex justify-end space-x-3">
+             <button
+               onClick={() => setDeleteConfirmId(null)}
+               className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+             >
+               Cancelar
+             </button>
+             <button
+               onClick={handleDeleteCategory}
+               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md"
+             >
+               Eliminar
+             </button>
+           </div>
          </div>
        </div>
      )}
@@ -580,6 +626,16 @@ export default function CategoryManagement() {
          >
            Familiares
          </button>
+         <button
+           onClick={() => setActiveFilter('global')}
+           className={`px-3 py-1 text-sm rounded-full ${
+             activeFilter === 'global'
+               ? 'bg-gray-600 text-white'
+               : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+           }`}
+         >
+           Globales
+         </button>
        </div>
        
        <div className="relative flex-grow">
@@ -633,11 +689,17 @@ export default function CategoryManagement() {
                          </div>
                          <div>
                            <h3 className="font-medium text-gray-900 dark:text-white">{category.name}</h3>
-                           <p className="text-xs text-gray-500 dark:text-gray-400">
-                             {category.family_group_id ? 
-                               `Familiar (${getFamilyGroupName(category.family_group_id)})` : 
-                               category.user_id ? 'Personal' : 'Global'}
-                           </p>
+                           <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full mt-0.5 ${
+                             category.family_group_id
+                               ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
+                               : category.user_id === user?.id
+                                 ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'
+                                 : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                           }`}>
+                             {category.family_group_id
+                               ? `Familiar · ${getFamilyGroupName(category.family_group_id)}`
+                               : category.user_id === user?.id ? 'Personal' : 'Global'}
+                           </span>
                          </div>
                        </div>
                        
@@ -652,7 +714,7 @@ export default function CategoryManagement() {
                          {/* Solo permitir eliminar categorías personales */}
                          {category.user_id === user?.id && (
                            <button
-                             onClick={() => handleDeleteCategory(category.id)}
+                             onClick={() => confirmDelete(category.id, category.name)}
                              className="p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                            >
                              <Trash size={18} />
@@ -688,7 +750,7 @@ export default function CategoryManagement() {
                                  
                                  {subcat.user_id === user?.id && (
                                    <button
-                                     onClick={() => handleDeleteCategory(subcat.id)}
+                                     onClick={() => confirmDelete(subcat.id, subcat.name)}
                                      className="p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                                    >
                                      <Trash size={14} />
@@ -741,11 +803,17 @@ export default function CategoryManagement() {
                          </div>
                          <div>
                            <h3 className="font-medium text-gray-900 dark:text-white">{category.name}</h3>
-                           <p className="text-xs text-gray-500 dark:text-gray-400">
-                             {category.family_group_id ? 
-                               `Familiar (${getFamilyGroupName(category.family_group_id)})` : 
-                               category.user_id ? 'Personal' : 'Global'}
-                           </p>
+                           <span className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full mt-0.5 ${
+                             category.family_group_id
+                               ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
+                               : category.user_id === user?.id
+                                 ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'
+                                 : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                           }`}>
+                             {category.family_group_id
+                               ? `Familiar · ${getFamilyGroupName(category.family_group_id)}`
+                               : category.user_id === user?.id ? 'Personal' : 'Global'}
+                           </span>
                          </div>
                        </div>
                        
@@ -760,7 +828,7 @@ export default function CategoryManagement() {
                          {/* Solo permitir eliminar categorías personales */}
                          {category.user_id === user?.id && (
                            <button
-                             onClick={() => handleDeleteCategory(category.id)}
+                             onClick={() => confirmDelete(category.id, category.name)}
                              className="p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                            >
                              <Trash size={18} />
@@ -796,7 +864,7 @@ export default function CategoryManagement() {
                                  
                                  {subcat.user_id === user?.id && (
                                    <button
-                                     onClick={() => handleDeleteCategory(subcat.id)}
+                                     onClick={() => confirmDelete(subcat.id, subcat.name)}
                                      className="p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                                    >
                                      <Trash size={14} />
@@ -814,6 +882,6 @@ export default function CategoryManagement() {
          )}
        </div>
      </div>
-   </DashboardLayout>
+   </div>
  );
 }

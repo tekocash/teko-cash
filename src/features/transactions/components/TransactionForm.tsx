@@ -89,6 +89,10 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
   const [periodicity, setPeriodicity] = useState<PeriodicityType>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   
+  // Estado para presupuesto seleccionado
+  const [budgetId, setBudgetId] = useState<string>('');
+  const [availableBudgets, setAvailableBudgets] = useState<{ id: string; name: string }[]>([]);
+
   // Estados para los datos cargados desde la API
   const [categories, setCategories] = useState<Category[]>([]);
   const [familyGroups, setFamilyGroups] = useState<FamilyGroup[]>([]);
@@ -122,8 +126,12 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
       const { data: categoriesData, error: categoriesError } = await getUserCategories(user.id);
       if (categoriesError) throw categoriesError;
       if (categoriesData) {
-        // Adaptar datos de categorías usando el servicio adaptador
-        const uiCategories = adaptCategories(categoriesData);
+        const uiCategories = adaptCategories(categoriesData).sort((a, b) => {
+          // Personales del usuario → primero; familiares → segundo; globales → último
+          const score = (c: typeof a) =>
+            c.user_id === user.id ? 0 : c.family_group_id ? 1 : 2;
+          return score(a) - score(b) || a.name.localeCompare(b.name);
+        });
         setCategories(uiCategories);
       }
       
@@ -165,6 +173,16 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
       if (typesData) {
         setTransactionTypes(typesData.map((t: any) => ({ id: t.id, name: t.name })));
       }
+
+      // Presupuestos activos del mes actual
+      const currentMonth = new Date().toISOString().slice(0, 7); // "yyyy-MM"
+      const { data: budgetsData } = await supabase
+        .from('budgets')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .eq('month', currentMonth)
+        .order('name');
+      if (budgetsData) setAvailableBudgets(budgetsData);
 
       // Comercios recientes
       const { data: recentTx } = await supabase
@@ -228,7 +246,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
         currency_id: currencyId,
         additional_info: additionalInfo || null,
         periodicity, // Usamos directamente el valor de periodicidad
-        budget_id: null,
+        budget_id: budgetId || null,
         nro_operacion: '',
       };
       
@@ -262,6 +280,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
     setReceipt(null);
     setAdditionalInfo('');
     setPeriodicity(null);
+    setBudgetId('');
     setSuccessMessage(null);
     setErrorMessage(null);
     setShowAdvancedOptions(false);
@@ -392,6 +411,25 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
               />
             )}
   
+            {/* Asignar a presupuesto (solo gastos, si hay presupuestos activos) */}
+            {direction === 'expense' && availableBudgets.length > 0 && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Asignar a presupuesto <span className="text-gray-400 font-normal">(opcional)</span>
+                </label>
+                <select
+                  value={budgetId}
+                  onChange={e => setBudgetId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200"
+                >
+                  <option value="">Sin presupuesto</option>
+                  {availableBudgets.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Opciones avanzadas */}
             <AdvancedOptionsToggle
               showOptions={showAdvancedOptions}

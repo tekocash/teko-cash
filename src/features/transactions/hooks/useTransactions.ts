@@ -53,7 +53,8 @@ export function useTransactions() {
 
       const { data, error } = await q;
       if (error) throw error;
-      setItems((data || []) as TxItem[]);
+      // Supabase returns joined category as array; cast via unknown
+      setItems((data || []) as unknown as TxItem[]);
     } catch (e) {
       console.error('Error loading transactions:', e);
     } finally {

@@ -64,7 +64,7 @@ export function useDashboardData() {
 
       if (txErr) throw txErr;
 
-      const transactions = (txs || []) as DashboardTx[];
+      const transactions = (txs || []) as unknown as DashboardTx[];
 
       let inc = 0, exp = 0;
       transactions.forEach(t => {

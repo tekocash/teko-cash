@@ -17,12 +17,12 @@ function ProtectedLayout() {
 // Lazy loading de páginas
 const LoginPage = lazy(() => import('./app/public/auth/Login'));
 const RegisterPage = lazy(() => import('./app/public/auth/Register'));
-//const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPassword'));
 const DashboardPage = lazy(() => import('./app/protected/dashboard/Dashboard'));
 const TransactionsPage = lazy(() => import('./app/(protected)/transactions/Transactions'));
 const BudgetsPage = lazy(() => import('./app/protected/budgets/Budgets'));
 const FamilyPage = lazy(() => import('./app/protected/family/Family'));
 const SettingsPage = lazy(() => import('./app/protected/settings/Settings'));
+const CategoriesPage = lazy(() => import('./features/categories/CategoryManagment'));
 
 function App() {
   return (
@@ -45,6 +45,7 @@ function App() {
             <Route path="/budgets" element={<BudgetsPage />} />
             <Route path="/family" element={<FamilyPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/categories" element={<CategoriesPage />} />
           </Route>
         </Routes>
       </Suspense>
