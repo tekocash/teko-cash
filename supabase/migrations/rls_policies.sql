@@ -214,10 +214,10 @@ CREATE POLICY "Currencies: read for all authenticated" ON public.currencies
 -- =============================================================
 
 -- categories: per-user soft-delete (global categories can be hidden per user via user_category_preferences.is_enabled)
--- The categories table itself doesn't need is_active — is_enabled in user_category_preferences covers the use case.
--- If you want a global is_active for admin control, add:
+-- The categories table itself doesn't need is_enabled — is_enabled in user_category_preferences covers the use case.
+-- If you want a global is_enabled for admin control, add:
 ALTER TABLE public.categories
-  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- budgets: repeat_frequency for auto-renewing budgets
 ALTER TABLE public.budgets
