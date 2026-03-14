@@ -91,7 +91,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
   
   // Estado para presupuesto seleccionado
   const [budgetId, setBudgetId] = useState<string>('');
-  const [availableBudgets, setAvailableBudgets] = useState<{ id: string; name: string }[]>([]);
+  const [availableBudgets, setAvailableBudgets] = useState<{ id: string; name: string; month?: string }[]>([]);
 
   // Estados para los datos cargados desde la API
   const [categories, setCategories] = useState<Category[]>([]);
@@ -174,13 +174,11 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
         setTransactionTypes(typesData.map((t: any) => ({ id: t.id, name: t.name })));
       }
 
-      // Presupuestos activos del mes actual
-      const currentMonth = new Date().toISOString().slice(0, 7); // "yyyy-MM"
+      // Todos los presupuestos del usuario (no filtrar por mes)
       const { data: budgetsData } = await supabase
         .from('budgets')
-        .select('id, name')
+        .select('id, name, month')
         .eq('user_id', user.id)
-        .eq('month', currentMonth)
         .order('name');
       if (budgetsData) setAvailableBudgets(budgetsData);
 
@@ -411,22 +409,28 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
               />
             )}
   
-            {/* Asignar a presupuesto (solo gastos, si hay presupuestos activos) */}
-            {direction === 'expense' && availableBudgets.length > 0 && (
+            {/* Asignar a presupuesto (solo gastos) */}
+            {direction === 'expense' && (
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Asignar a presupuesto <span className="text-gray-400 font-normal">(opcional)</span>
+                  Presupuesto <span className="text-gray-400 font-normal">(opcional)</span>
                 </label>
-                <select
-                  value={budgetId}
-                  onChange={e => setBudgetId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200"
-                >
-                  <option value="">Sin presupuesto</option>
-                  {availableBudgets.map(b => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
+                {availableBudgets.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">
+                    No tenés presupuestos creados. Podés crear uno en la sección Presupuestos.
+                  </p>
+                ) : (
+                  <select
+                    value={budgetId}
+                    onChange={e => setBudgetId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200"
+                  >
+                    <option value="">Sin presupuesto</option>
+                    {availableBudgets.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             )}
 

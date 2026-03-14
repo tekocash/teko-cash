@@ -17,60 +17,29 @@ export const getUserFamilyGroups = async (
   userId: string
 ): Promise<{ data: ApiFamilyGroup[] | null; error: any }> => {
   try {
-    // Primero obtenemos los grupos donde el usuario es propietario
-    const { data: ownedGroups, error: ownedError } = await supabase
-      .from('family_groups')
-      .select('*')
-      .eq('owner_id', userId)
-      .order('created_at', { ascending: false });
-      
-    if (ownedError) {
-      return { data: null, error: ownedError };
-    }
-    
-    // Obtener los IDs de los grupos donde el usuario es participante
+    // Use family_group_participants as source of truth — owners are inserted there on creation
+    // This correctly excludes groups where the user left (status != 'active')
     const { data: participantData, error: participantError } = await supabase
       .from('family_group_participants')
       .select('group_id')
       .eq('user_id', userId)
       .eq('status', 'active');
-      
-    if (participantError) {
-      return { data: null, error: participantError };
-    }
-    
-    // Si no hay grupos participantes, devolver solo los propios
-    if (!participantData || participantData.length === 0) {
-      return { data: ownedGroups, error: null };
-    }
-    
-    // Extraer IDs de los grupos participantes
-    const participantGroupIds = participantData.map(p => p.group_id);
-    
-    // Obtener los detalles de los grupos participantes
-    const { data: memberGroups, error: memberError } = await supabase
+
+    if (participantError) return { data: null, error: participantError };
+    if (!participantData || participantData.length === 0) return { data: [], error: null };
+
+    const groupIds = participantData.map(p => p.group_id);
+
+    const { data: groups, error: groupsError } = await supabase
       .from('family_groups')
       .select('*')
-      .in('id', participantGroupIds)
+      .in('id', groupIds)
       .order('created_at', { ascending: false });
-      
-    if (memberError) {
-      return { data: null, error: memberError };
-    }
-    
-    // Combinar resultados eliminando duplicados (por si es propietario y participante)
-    const allGroups = [...ownedGroups];
-    const ownedIds = new Set(ownedGroups.map(g => g.id));
-    
-    memberGroups.forEach(group => {
-      if (!ownedIds.has(group.id)) {
-        allGroups.push(group);
-      }
-    });
-    
-    return { data: allGroups, error: null };
+
+    if (groupsError) return { data: null, error: groupsError };
+    return { data: groups, error: null };
   } catch (error) {
-    console.error("Error al obtener grupos familiares:", error);
+    console.error('Error al obtener grupos familiares:', error);
     return { data: null, error };
   }
 };

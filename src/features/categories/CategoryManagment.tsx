@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/auth-store';
-import { Plus, Edit, Trash, X, Check, Filter, Search, ChevronDown, Minus } from 'lucide-react';
+import { Plus, Edit, Trash, X, Check, Filter, Search, ChevronDown, Minus, Eye, EyeOff } from 'lucide-react';
 import {
   getCategoriesWithPreferences,
   createCategory,
@@ -58,7 +58,7 @@ export default function CategoryManagement() {
   });
   
   // Estados para filtros
-  const [activeFilter, setActiveFilter] = useState<'all' | 'expense' | 'income' | 'personal' | 'family' | 'global'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'expense' | 'income' | 'personal' | 'family' | 'global' | 'inactive'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -107,11 +107,18 @@ export default function CategoryManagement() {
   // Filtrar y ordenar categorías: personales primero, luego globales
   const filteredCategories = categories
     .filter(cat => {
-      if (activeFilter === 'expense'  && cat.category_type !== 'expense') return false;
-      if (activeFilter === 'income'   && cat.category_type !== 'income')  return false;
-      if (activeFilter === 'personal' && cat.user_id !== user?.id)        return false;
-      if (activeFilter === 'family'   && cat.family_group_id === null)    return false;
-      if (activeFilter === 'global'   && cat.user_id !== null)            return false;
+      if (activeFilter === 'inactive') {
+        // Only show disabled categories
+        if (cat.is_enabled !== false) return false;
+      } else {
+        // Hide disabled categories unless explicitly viewing inactive
+        if (cat.is_enabled === false) return false;
+        if (activeFilter === 'expense'  && cat.category_type !== 'expense') return false;
+        if (activeFilter === 'income'   && cat.category_type !== 'income')  return false;
+        if (activeFilter === 'personal' && cat.user_id !== user?.id)        return false;
+        if (activeFilter === 'family'   && cat.family_group_id === null)    return false;
+        if (activeFilter === 'global'   && cat.user_id !== null)            return false;
+      }
       if (searchQuery && !cat.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       return true;
     })
@@ -215,6 +222,25 @@ export default function CategoryManagement() {
       setSuccessMessage('Categoría eliminada con éxito');
     } catch (err: any) {
       setErrorMessage(`Error al eliminar categoría: ${err.message}`);
+    }
+  };
+
+  // Activar/desactivar categoría mediante is_enabled
+  const handleToggleCategoryEnabled = async (category: CategoryWithPreferences) => {
+    if (!user?.id) return;
+    const newEnabled = !(category.is_enabled !== false); // true by default if undefined
+    try {
+      await setUserCategoryPreference({
+        user_id: user.id,
+        category_id: category.id,
+        is_enabled: newEnabled,
+        color: category.color || '#3B82F6',
+        icon: category.icon || '📁',
+        is_favorite: false,
+      });
+      loadCategories();
+    } catch (err: any) {
+      setErrorMessage(`Error al actualizar categoría: ${err.message}`);
     }
   };
 
@@ -636,6 +662,16 @@ export default function CategoryManagement() {
          >
            Globales
          </button>
+         <button
+           onClick={() => setActiveFilter('inactive')}
+           className={`px-3 py-1 text-sm rounded-full ${
+             activeFilter === 'inactive'
+               ? 'bg-gray-500 text-white'
+               : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+           }`}
+         >
+           Inactivas
+         </button>
        </div>
        
        <div className="relative flex-grow">
@@ -678,10 +714,10 @@ export default function CategoryManagement() {
                {filteredCategories
                  .filter(cat => cat.category_type === 'expense' && cat.parent_id === null)
                  .map(category => (
-                   <div key={category.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                   <div key={category.id} className={`border border-gray-200 dark:border-gray-700 rounded-lg p-3 ${category.is_enabled === false ? 'opacity-50' : ''}`}>
                      <div className="flex items-center justify-between">
                        <div className="flex items-center">
-                         <div 
+                         <div
                            className="w-10 h-10 rounded-full flex items-center justify-center text-xl mr-3 flex-shrink-0"
                            style={{ backgroundColor: category.color || '#EF4444', color: '#ffffff' }}
                          >
@@ -702,7 +738,7 @@ export default function CategoryManagement() {
                            </span>
                          </div>
                        </div>
-                       
+
                        <div className="flex space-x-1">
                          <button
                            onClick={() => startEditCategory(category)}
@@ -710,7 +746,15 @@ export default function CategoryManagement() {
                          >
                            <Edit size={18} />
                          </button>
-                         
+
+                         <button
+                           onClick={() => handleToggleCategoryEnabled(category)}
+                           className={`p-1 ${category.is_enabled === false ? 'text-gray-300 dark:text-gray-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}
+                           title={category.is_enabled === false ? 'Activar categoría' : 'Desactivar categoría'}
+                         >
+                           {category.is_enabled === false ? <EyeOff size={18} /> : <Eye size={18} />}
+                         </button>
+
                          {/* Solo permitir eliminar categorías personales */}
                          {category.user_id === user?.id && (
                            <button
@@ -792,10 +836,10 @@ export default function CategoryManagement() {
                {filteredCategories
                  .filter(cat => cat.category_type === 'income' && cat.parent_id === null)
                  .map(category => (
-                   <div key={category.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                   <div key={category.id} className={`border border-gray-200 dark:border-gray-700 rounded-lg p-3 ${category.is_enabled === false ? 'opacity-50' : ''}`}>
                      <div className="flex items-center justify-between">
                        <div className="flex items-center">
-                         <div 
+                         <div
                            className="w-10 h-10 rounded-full flex items-center justify-center text-xl mr-3 flex-shrink-0"
                            style={{ backgroundColor: category.color || '#10B981', color: '#ffffff' }}
                          >
@@ -816,7 +860,7 @@ export default function CategoryManagement() {
                            </span>
                          </div>
                        </div>
-                       
+
                        <div className="flex space-x-1">
                          <button
                            onClick={() => startEditCategory(category)}
@@ -824,7 +868,15 @@ export default function CategoryManagement() {
                          >
                            <Edit size={18} />
                          </button>
-                         
+
+                         <button
+                           onClick={() => handleToggleCategoryEnabled(category)}
+                           className={`p-1 ${category.is_enabled === false ? 'text-gray-300 dark:text-gray-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}`}
+                           title={category.is_enabled === false ? 'Activar categoría' : 'Desactivar categoría'}
+                         >
+                           {category.is_enabled === false ? <EyeOff size={18} /> : <Eye size={18} />}
+                         </button>
+
                          {/* Solo permitir eliminar categorías personales */}
                          {category.user_id === user?.id && (
                            <button

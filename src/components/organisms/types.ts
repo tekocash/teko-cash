@@ -18,6 +18,7 @@ export interface Category {
   // pero algunos componentes esperan tenerlas aquí
   icon?: string;
   color?: string;
+  is_enabled?: boolean;
 }
 
 export interface FamilyGroup {

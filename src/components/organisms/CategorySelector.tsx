@@ -34,9 +34,9 @@ export function CategorySelector({
 }: CategorySelectorProps) {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   
-  // Filtrar categorías según el tipo de transacción
+  // Filtrar categorías según el tipo de transacción y excluir las desactivadas
   const filteredCategories = categories.filter(
-    cat => cat.category_type === direction
+    cat => cat.category_type === direction && cat.is_enabled !== false
   );
   
   const getSelectedCategoryName = () => {

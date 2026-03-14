@@ -9,7 +9,8 @@ import {
   inviteToFamilyGroup,
   createFamilyGroup,
   updateMemberPercentage,
-  leaveFamilyGroup
+  leaveFamilyGroup,
+  joinFamilyGroupByInviteCode
 } from '@/features/family/services/family-service';
 import type { ApiFamilyGroup, ApiGroupMemberDetails } from '@/types/api';
 
@@ -61,6 +62,8 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
   const [newGroup, setNewGroup] = useState<FamilyGroupInput>(initialNewGroupState);
   const [invite, setInvite] = useState(initialInviteState);
   const [editPercentage, setEditPercentage] = useState<number>(0);
+  const [joinCode, setJoinCode] = useState('');
+  const [joiningGroup, setJoiningGroup] = useState(false);
 
   // Estados para mensajes
   const [error, setError] = useState<string | null>(null);
@@ -149,8 +152,18 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
         invite.percentage
       );
       
-      if (error) throw error;
-      
+      if (error) {
+        if (error.message?.includes('no encontrado') || error.message?.includes('not found')) {
+          // User not yet registered — guide them to share the code instead
+          const selectedGroup = groups.find(g => g.id === selectedGroupId);
+          const code = selectedGroup?.invite_code ?? '';
+          setError(`Ese email aún no está registrado en Teko Cash. Compartí el código de invitación: ${code}`);
+        } else {
+          throw error;
+        }
+        return;
+      }
+
       // Recargar miembros
       loadGroupMembers(selectedGroupId);
       setShowInviteForm(false);
@@ -208,17 +221,34 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
     }
   };
 
-  // Copiar enlace de invitación al portapapeles
+  // Copiar código de invitación al portapapeles
   const copyInviteLink = (inviteCode: string) => {
-    const inviteLink = `${window.location.origin}/dashboard/family/join/${inviteCode}`;
-    navigator.clipboard.writeText(inviteLink)
+    navigator.clipboard.writeText(inviteCode)
       .then(() => {
         setInviteLinkCopied(true);
         setTimeout(() => setInviteLinkCopied(false), 2000);
       })
-      .catch(err => {
-        setError('Error al copiar el enlace de invitación');
+      .catch(() => {
+        setError('Error al copiar el código de invitación');
       });
+  };
+
+  // Unirse a un grupo con código de invitación
+  const handleJoinByCode = async () => {
+    if (!joinCode.trim() || !user?.id) return;
+    setJoiningGroup(true);
+    setError(null);
+    const { error: joinErr } = await joinFamilyGroupByInviteCode(joinCode.trim().toUpperCase(), user.id);
+    setJoiningGroup(false);
+    if (joinErr) {
+      setError(joinErr.message || 'Código inválido o ya sos miembro');
+    } else {
+      setSuccess('Te uniste al grupo exitosamente');
+      setJoinCode('');
+      // Recargar grupos
+      const { data } = await getUserFamilyGroups(user.id);
+      if (data) setGroups(data);
+    }
   };
 
   // Verificar si el usuario es el propietario del grupo seleccionado
@@ -243,6 +273,29 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
         <p className="text-gray-600 dark:text-gray-300">
           Administra tus grupos familiares para compartir gastos
         </p>
+      </div>
+
+      {/* Unirse a un grupo con código de invitación */}
+      <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Unirse a un grupo con código</p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={joinCode}
+            onChange={e => setJoinCode(e.target.value.toUpperCase())}
+            placeholder="Ej: A3B7C9D2"
+            maxLength={10}
+            className="flex-1 px-3 py-2 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200 font-mono tracking-wider"
+          />
+          <button
+            onClick={handleJoinByCode}
+            disabled={!joinCode.trim() || joiningGroup}
+            className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {joiningGroup ? 'Uniéndose...' : 'Unirse'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mt-1.5">Pedile el código de 8 caracteres al dueño del grupo.</p>
       </div>
 
       {/* Mensajes de error y éxito */}
@@ -463,7 +516,7 @@ export default function FamilyGroupManagement({ initialGroupId }: FamilyGroupMan
                           className="flex items-center w-full px-4 py-2 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                         >
                           <Share2 size={16} className="mr-2" />
-                          Copiar enlace de invitación
+                          {inviteLinkCopied ? 'Código copiado ✓' : 'Copiar código de invitación'}
                         </button>
                         <button
                           onClick={() => {
