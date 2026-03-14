@@ -105,6 +105,14 @@ export const useAuthStore = create<AuthState>()(
         try {
           const { error } = await supabase.auth.signOut();
           if (error) throw error;
+          // Limpiar todos los caches del usuario de localStorage
+          const CACHE_KEYS = [
+            'teko-transactions',
+            'teko_notif_prefs',
+            'teko_budget_alerts_seen',
+            'teko_pending_notifs',
+          ];
+          CACHE_KEYS.forEach(k => localStorage.removeItem(k));
           set({ user: null, session: null });
         } catch (error: any) {
           set({ error: error.message });
@@ -115,16 +123,10 @@ export const useAuthStore = create<AuthState>()(
       refreshSession: async () => {
         try {
           set({ isLoading: true });
-          console.log('Refrescando sesión...');
           const { data, error } = await supabase.auth.getSession();
-          
-          if (error) {
-            console.error('Error obteniendo sesión:', error);
-            throw error;
-          }
-          
-          console.log('Sesión obtenida:', data.session ? 'Sí' : 'No');
-          
+
+          if (error) throw error;
+
           if (data?.session) {
             // Obtener datos del usuario
             const { data: userData, error: userError } = await supabase
@@ -132,13 +134,10 @@ export const useAuthStore = create<AuthState>()(
               .select('*')
               .eq('id', data.session.user.id)
               .single();
-            
+
             if (userError) {
-              console.error('Error obteniendo datos de usuario:', userError);
-              
-              // Si el error es que no existe el usuario, tal vez necesitamos crearlo
+              // Si el error es que no existe el usuario, creamos el perfil
               if (userError.code === 'PGRST116') {
-                console.log('Usuario no encontrado, intentando crear perfil...');
                 
                 // Crear perfil de usuario básico
                 const { error: createError } = await supabase
@@ -151,10 +150,7 @@ export const useAuthStore = create<AuthState>()(
                     type: 'standard'
                   });
                 
-                if (createError) {
-                  console.error('Error creando perfil de usuario:', createError);
-                  throw createError;
-                }
+                if (createError) throw createError;
                 
                 // Obtener el usuario recién creado
                 const { data: newUserData, error: newUserError } = await supabase
@@ -223,7 +219,8 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'teko-auth-storage',
-      partialize: (state) => ({ user: state.user, session: state.session }),
+      // Solo persistir datos del usuario (no el token de sesión — Supabase SDK lo maneja en su propio storage)
+      partialize: (state) => ({ user: state.user }),
     }
   )
 );

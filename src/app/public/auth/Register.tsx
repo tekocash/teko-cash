@@ -21,7 +21,17 @@ export default function RegisterPage() {
       toast.error('Las contraseñas no coinciden');
       return;
     }
-    
+
+    if (password.length < 8) {
+      toast.error('La contraseña debe tener al menos 8 caracteres');
+      return;
+    }
+
+    if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+      toast.error('La contraseña debe incluir al menos una mayúscula y un número');
+      return;
+    }
+
     try {
       await signUp(email, password, name);
       toast.success('Cuenta creada con éxito');

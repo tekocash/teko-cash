@@ -2,11 +2,16 @@ import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '@/lib/supabase/client';
 import { useAuthStore } from '@/store/auth-store';
-import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek } from 'date-fns';
+import {
+  format, startOfMonth, endOfMonth, startOfWeek, endOfWeek,
+  addMonths, addWeeks, addYears, parseISO, isBefore, startOfDay,
+} from 'date-fns';
 
 const NOTIF_KEY = 'teko_notif_prefs';
 const ALERT_SEEN_KEY = 'teko_budget_alerts_seen';
 export const PENDING_NOTIFS_KEY = 'teko_pending_notifs';
+
+export type RepeatFrequency = 'none' | 'mensual' | 'semanal' | 'anual';
 
 export interface PendingNotif {
   id: string;
@@ -19,7 +24,7 @@ export interface PendingNotif {
 function pushPendingNotif(notif: PendingNotif) {
   try {
     const existing: PendingNotif[] = JSON.parse(localStorage.getItem(PENDING_NOTIFS_KEY) || '[]');
-    if (existing.find(n => n.id === notif.id)) return; // no duplicar
+    if (existing.find(n => n.id === notif.id)) return;
     existing.unshift(notif);
     localStorage.setItem(PENDING_NOTIFS_KEY, JSON.stringify(existing.slice(0, 30)));
   } catch {}
@@ -62,14 +67,24 @@ function checkBudgetAlerts(budgets: BudgetItem[]) {
   });
 }
 
+/** Advance start/end by one period according to repeat_frequency */
+function nextPeriod(start: string, end: string, freq: RepeatFrequency): { start: string; end: string } {
+  const s = parseISO(start);
+  const e = parseISO(end);
+  if (freq === 'mensual') return { start: format(addMonths(s, 1), 'yyyy-MM-dd'), end: format(addMonths(e, 1), 'yyyy-MM-dd') };
+  if (freq === 'semanal') return { start: format(addWeeks(s, 1), 'yyyy-MM-dd'), end: format(addWeeks(e, 1), 'yyyy-MM-dd') };
+  if (freq === 'anual')   return { start: format(addYears(s, 1), 'yyyy-MM-dd'), end: format(addYears(e, 1), 'yyyy-MM-dd') };
+  return { start, end };
+}
+
 export interface BudgetItem {
   id: string;
   name: string;
   periodicity: string | null;
+  repeat_frequency: RepeatFrequency;
   start_date: string;
   end_date: string;
   planned_amount: number;
-  /** Sum of expense transactions with budget_id = this budget */
   spent: number;
   month: string;
 }
@@ -78,6 +93,7 @@ export interface CreateBudgetInput {
   name: string;
   planned_amount: number;
   periodicity: 'mensual' | 'anual' | 'otro';
+  repeat_frequency: RepeatFrequency;
   start_date: string;
   end_date: string;
 }
@@ -95,10 +111,10 @@ export function useBudgets() {
     try {
       const { data: budgetsData, error: budgetsErr } = await supabase
         .from('budgets')
-        .select('id, name, start_date, end_date, planned_amount, month, periodicity')
+        .select('id, name, start_date, end_date, planned_amount, month, periodicity, repeat_frequency')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(30);
+        .limit(50);
 
       if (budgetsErr) throw budgetsErr;
       if (!budgetsData || budgetsData.length === 0) {
@@ -106,9 +122,54 @@ export function useBudgets() {
         return;
       }
 
-      // Compute spending: sum of expense transactions assigned to each budget
-      // This works for "multi-category" budgets naturally —
-      // transactions carry category info but spending is tracked via budget_id
+      // Auto-renew: for each repeating budget whose end_date < today, create the next period
+      // if it doesn't already exist (checked by name + period overlap)
+      const today = startOfDay(new Date());
+      const existingNames = new Set(budgetsData.map(b => b.name));
+
+      for (const b of budgetsData) {
+        const freq = (b.repeat_frequency ?? 'none') as RepeatFrequency;
+        if (freq === 'none') continue;
+
+        let { start, end } = { start: String(b.start_date).slice(0, 10), end: String(b.end_date).slice(0, 10) };
+
+        // Advance until we reach current or future period
+        let iterations = 0;
+        while (isBefore(parseISO(end), today) && iterations < 24) {
+          const next = nextPeriod(start, end, freq);
+          start = next.start;
+          end = next.end;
+          iterations++;
+        }
+
+        // If we advanced at least once, the current period is new → create if not covered
+        if (iterations > 0) {
+          const newMonth = format(parseISO(start), 'yyyy-MM');
+          const alreadyExists = budgetsData.some(
+            x => x.name === b.name && String(x.month).startsWith(newMonth)
+          );
+          if (!alreadyExists && !existingNames.has(`${b.name}_auto_${newMonth}`)) {
+            const { data: cur } = await supabase.from('currencies').select('id').eq('code', 'PYG').maybeSingle();
+            await supabase.from('budgets').insert({
+              user_id: user.id,
+              name: b.name,
+              planned_amount: b.planned_amount,
+              amount: b.planned_amount,
+              start_date: start,
+              end_date: end,
+              month: newMonth,
+              periodicity: b.periodicity,
+              repeat_frequency: freq,
+              currency_id: cur?.id ?? null,
+            });
+            // Re-fetch after auto-create
+            await load();
+            return;
+          }
+        }
+      }
+
+      // Compute spending per budget
       const withSpending = await Promise.all(
         budgetsData.map(async (b) => {
           const { data: txs } = await supabase
@@ -122,6 +183,7 @@ export function useBudgets() {
             id: b.id,
             name: b.name,
             periodicity: b.periodicity,
+            repeat_frequency: (b.repeat_frequency ?? 'none') as RepeatFrequency,
             start_date: String(b.start_date).slice(0, 10),
             end_date: String(b.end_date).slice(0, 10),
             planned_amount: Number(b.planned_amount),
@@ -162,6 +224,7 @@ export function useBudgets() {
         end_date: input.end_date,
         month,
         periodicity: input.periodicity,
+        repeat_frequency: input.repeat_frequency,
         currency_id: cur?.id ?? null,
       });
 

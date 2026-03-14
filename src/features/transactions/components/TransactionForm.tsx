@@ -14,11 +14,10 @@ import { supabase } from '@/lib/supabase/client';
 import { useAuthStore } from '@/store/auth-store';
 
 // Importar adaptadores
-import { 
-  adaptCategories, 
-  adaptFamilyGroups, 
+import {
+  adaptCategories,
+  adaptFamilyGroups,
   adaptPaymentMethods,
-  prepareTransactionForApi
 } from '@/lib/adapters/adapter-service';
 
 // Importar componentes UI
@@ -75,7 +74,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
   // Estados del formulario
   const [direction, setDirection] = useState<TransactionDirection>(initialDirection);
   const [amount, setAmount] = useState<string>('');
-  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState<string>(new Date().toLocaleDateString('en-CA'));
   const [categoryId, setCategoryId] = useState<string>('');
   const [concepto, setConcepto] = useState<string>('');
   const [comercio, setComercio] = useState<string>('');
@@ -250,9 +249,21 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
       
       // Enviar a la API de Supabase
       const { data, error } = await createTransaction(formData);
- 
       if (error) throw error;
-      
+
+      // Si hay comprobante, subirlo a Supabase Storage y actualizar la transacción
+      if (receipt && data?.id) {
+        const ext = receipt.name.split('.').pop() || 'jpg';
+        const path = `${user.id}/${data.id}.${ext}`;
+        const { error: uploadErr } = await supabase.storage
+          .from('receipts')
+          .upload(path, receipt, { upsert: true });
+        if (!uploadErr) {
+          const { data: { publicUrl } } = supabase.storage.from('receipts').getPublicUrl(path);
+          await supabase.from('transactions').update({ receipt_url: publicUrl }).eq('id', data.id);
+        }
+      }
+
       setSuccessMessage(direction === 'expense' ? 'Gasto registrado con éxito!' : 'Ingreso registrado con éxito!');
     } catch (err: any) {
       console.error('Error al guardar la transacción:', err);
@@ -267,7 +278,7 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
    */
   const resetForm = () => {
     setAmount('');
-    setDate(new Date().toISOString().split('T')[0]);
+    setDate(new Date().toLocaleDateString('en-CA'));
     setCategoryId('');
     setConcepto('');
     setComercio('');
@@ -434,24 +445,24 @@ export default function TransactionForm({ initialDirection = 'expense' }: Transa
               </div>
             )}
 
+            {/* Método de pago (visible siempre para gastos) */}
+            {direction === 'expense' && (
+              <PaymentMethodSelector
+                paymentMethods={paymentMethods}
+                selectedMethodId={paymentMethodId}
+                onMethodChange={setPaymentMethodId}
+                onNewMethodClick={handleNewPaymentMethodClick}
+              />
+            )}
+
             {/* Opciones avanzadas */}
             <AdvancedOptionsToggle
               showOptions={showAdvancedOptions}
               onToggle={() => setShowAdvancedOptions(!showAdvancedOptions)}
             />
-  
+
             {showAdvancedOptions && (
               <div className="space-y-6 pb-4 animate-fadeIn">
-                {/* Método de pago (solo para gastos) */}
-                {direction === 'expense' && (
-                  <PaymentMethodSelector
-                    paymentMethods={paymentMethods}
-                    selectedMethodId={paymentMethodId}
-                    onMethodChange={setPaymentMethodId}
-                    onNewMethodClick={handleNewPaymentMethodClick}
-                  />
-                )}
-  
                 {/* Tipo de transacción */}
                 <TransactionTypeSelector
                   transactionTypes={transactionTypes}

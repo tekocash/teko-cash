@@ -41,7 +41,7 @@ export function CategorySelector({
   
   const getSelectedCategoryName = () => {
     const selected = categories.find(cat => cat.id === selectedCategoryId);
-    return selected ? `${selected.icon || ''} ${selected.name}` : 'Selecciona una categoría';
+    return selected ? selected.name : 'Selecciona una categoría';
   };
   
   return (

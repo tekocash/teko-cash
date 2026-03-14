@@ -1,14 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { useBudgets, PERIOD_PRESETS } from '@/features/budgets/hooks/useBudgets';
+import { useBudgets, PERIOD_PRESETS, RepeatFrequency } from '@/features/budgets/hooks/useBudgets';
 import { toast } from 'react-hot-toast';
-import { Plus, X, AlertTriangle, TrendingUp, Trash2, RefreshCw, Wallet, Info } from 'lucide-react';
+import { Plus, X, AlertTriangle, TrendingUp, Trash2, RefreshCw, Wallet, Info, Repeat } from 'lucide-react';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
 
-/** Returns a clamped width % and color for the progress bar */
 function barStyle(spent: number, planned: number) {
   if (planned <= 0) return { width: 0, color: 'bg-gray-300' };
   const raw = (spent / planned) * 100;
@@ -25,15 +24,24 @@ function badgeClass(spent: number, planned: number) {
 }
 
 const PERIODICITY_LABEL: Record<string, string> = {
-  mensual: 'Mensual',
-  anual: 'Anual',
-  otro: 'Semanal',
-  ocasional: 'Ocasional',
-  puntual: 'Puntual',
-  trimestral: 'Trimestral',
+  mensual: 'Mensual', anual: 'Anual', otro: 'Semanal', ocasional: 'Ocasional', trimestral: 'Trimestral',
 };
 
-const EMOJIS = ['💰', '🏠', '🚗', '🛒', '🍔', '💊', '📚', '✈️', '🎬', '👕', '📱', '🐾', '⚽', '🔧'];
+const REPEAT_LABEL: Record<RepeatFrequency, string> = {
+  none: 'No repetir', mensual: 'Repetir mensualmente', semanal: 'Repetir semanalmente', anual: 'Repetir anualmente',
+};
+
+// Quick-preset suggestions for common budget names + amounts (PYG)
+const BUDGET_PRESETS = [
+  { emoji: '🛒', name: 'Supermercado',   amount: 500_000  },
+  { emoji: '🚗', name: 'Combustible',    amount: 300_000  },
+  { emoji: '🍽️', name: 'Salidas/Comida', amount: 200_000  },
+  { emoji: '🏠', name: 'Hogar',          amount: 800_000  },
+  { emoji: '💊', name: 'Salud',          amount: 200_000  },
+  { emoji: '🎬', name: 'Entretenimiento',amount: 150_000  },
+  { emoji: '📱', name: 'Tecnología',     amount: 300_000  },
+  { emoji: '✈️', name: 'Viajes',         amount: 1_000_000 },
+];
 
 const now = new Date();
 
@@ -42,6 +50,10 @@ export default function BudgetsPage() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Delete confirm state
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const [form, setForm] = useState({
     emoji: '💰',
     name: '',
@@ -49,7 +61,20 @@ export default function BudgetsPage() {
     presetIdx: 0,
     start_date: PERIOD_PRESETS[0].start,
     end_date: PERIOD_PRESETS[0].end,
+    repeat_frequency: 'none' as RepeatFrequency,
   });
+
+  // Close modal on ESC
+  useEffect(() => {
+    if (!showModal && !deleteConfirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (deleteConfirm) { setDeleteConfirm(null); return; }
+      setShowModal(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showModal, deleteConfirm]);
 
   const handlePreset = (idx: number) => {
     setForm(f => ({
@@ -57,11 +82,17 @@ export default function BudgetsPage() {
       presetIdx: idx,
       start_date: PERIOD_PRESETS[idx]?.start ?? f.start_date,
       end_date: PERIOD_PRESETS[idx]?.end ?? f.end_date,
+      // Auto-match repeat_frequency to period preset
+      repeat_frequency: idx === 0 ? 'mensual' : idx === 1 ? 'semanal' : idx === 2 ? 'anual' : f.repeat_frequency,
     }));
   };
 
+  const applyBudgetPreset = (p: typeof BUDGET_PRESETS[0]) => {
+    setForm(f => ({ ...f, emoji: p.emoji, name: p.name, amount: String(p.amount) }));
+  };
+
   const openModal = () => {
-    setForm({ emoji: '💰', name: '', amount: '', presetIdx: 0, start_date: PERIOD_PRESETS[0].start, end_date: PERIOD_PRESETS[0].end });
+    setForm({ emoji: '💰', name: '', amount: '', presetIdx: 0, start_date: PERIOD_PRESETS[0].start, end_date: PERIOD_PRESETS[0].end, repeat_frequency: 'mensual' });
     setShowModal(true);
   };
 
@@ -72,20 +103,21 @@ export default function BudgetsPage() {
       name: `${form.emoji} ${form.name.trim()}`,
       planned_amount: Number(form.amount),
       periodicity: PERIOD_PRESETS[form.presetIdx]?.value ?? 'mensual',
+      repeat_frequency: form.repeat_frequency,
       start_date: form.start_date,
       end_date: form.end_date,
     });
     setSaving(false);
-    if (err) {
-      toast.error('Error al crear presupuesto');
-    } else {
-      toast.success('Presupuesto creado');
-      setShowModal(false);
-    }
+    if (err) toast.error('Error al crear presupuesto');
+    else { toast.success('Presupuesto creado'); setShowModal(false); }
   };
 
-  const handleDelete = async (id: string) => {
-    const { error: err } = await deleteBudget(id);
+  const handleDeleteConfirmed = async () => {
+    if (!deleteConfirm) return;
+    setDeleting(true);
+    const { error: err } = await deleteBudget(deleteConfirm.id);
+    setDeleting(false);
+    setDeleteConfirm(null);
     if (err) toast.error('Error al eliminar');
     else toast.success('Presupuesto eliminado');
   };
@@ -104,40 +136,39 @@ export default function BudgetsPage() {
         </div>
         <div className="flex gap-2">
           <button onClick={reload} disabled={isLoading}
-            className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-40">
+            className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40">
             <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
           </button>
           <button onClick={openModal}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">
             <Plus size={15} />
             <span className="hidden sm:inline">Nuevo</span>
           </button>
         </div>
       </div>
 
-      {/* How it works */}
+      {/* Info banner */}
       <div className="flex items-start gap-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 px-4 py-3 text-xs text-indigo-700 dark:text-indigo-300">
         <Info size={14} className="mt-0.5 shrink-0" />
         <span>
-          Los presupuestos son <strong>estimativos de gasto</strong>. Al registrar una transacción,
-          podés asignarla a un presupuesto para que cuente contra él. Podés superar el monto
-          estimado, la app te avisa cuando te acercás al límite.
+          Los presupuestos son <strong>estimativos de gasto</strong>. Asignale un gasto al registrar una transacción.
+          Podés configurarlos para que <strong>se repitan automáticamente</strong> cada mes, semana o año.
         </span>
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+        <div className="flex items-center gap-2 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 px-4 py-3 text-sm text-red-700 dark:text-red-400">
           <AlertTriangle size={15} /> {error}
         </div>
       )}
 
-      {/* Summary — current month only */}
+      {/* Summary */}
       {!isLoading && totalBudgeted > 0 && (
         <>
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: 'Estimado', value: fmt(totalBudgeted), color: 'text-gray-800 dark:text-white' },
-              { label: 'Gastado', value: fmt(totalSpent), color: totalSpent > totalBudgeted ? 'text-red-600' : 'text-gray-800 dark:text-white' },
+              { label: 'Estimado',   value: fmt(totalBudgeted), color: 'text-gray-800 dark:text-white' },
+              { label: 'Gastado',    value: fmt(totalSpent),    color: totalSpent > totalBudgeted ? 'text-red-600' : 'text-gray-800 dark:text-white' },
               { label: 'Disponible', value: fmt(Math.max(totalBudgeted - totalSpent, 0)), color: totalBudgeted - totalSpent < 0 ? 'text-red-600' : 'text-emerald-600 dark:text-emerald-400' },
             ].map(c => (
               <div key={c.label} className="rounded-2xl p-4 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm">
@@ -158,10 +189,8 @@ export default function BudgetsPage() {
               </span>
             </div>
             <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3">
-              <div
-                className={`h-3 rounded-full transition-all ${barStyle(totalSpent, totalBudgeted).color}`}
-                style={{ width: `${barStyle(totalSpent, totalBudgeted).width}%` }}
-              />
+              <div className={`h-3 rounded-full transition-all ${barStyle(totalSpent, totalBudgeted).color}`}
+                style={{ width: `${barStyle(totalSpent, totalBudgeted).width}%` }} />
             </div>
             {totalSpent > totalBudgeted && (
               <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
@@ -191,9 +220,7 @@ export default function BudgetsPage() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border border-gray-100 dark:border-gray-700">
             <Wallet size={40} className="mx-auto text-gray-300 dark:text-gray-600 mb-3" />
             <h3 className="text-base font-semibold text-gray-600 dark:text-gray-400 mb-1">Sin presupuestos</h3>
-            <p className="text-sm text-gray-400 mb-5">
-              Creá un presupuesto para estimar cuánto querés gastar en cada área.
-            </p>
+            <p className="text-sm text-gray-400 mb-5">Creá un presupuesto para estimar cuánto querés gastar.</p>
             <button onClick={openModal}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">
               <Plus size={14} /> Crear presupuesto
@@ -210,16 +237,21 @@ export default function BudgetsPage() {
 
               return (
                 <div key={budget.id}
-                  className={`bg-white dark:bg-gray-800 rounded-2xl p-5 border shadow-sm transition-all ${
+                  className={`bg-white dark:bg-gray-800 rounded-2xl p-5 border shadow-sm ${
                     isOver ? 'border-red-200 dark:border-red-800' : isWarn ? 'border-amber-200 dark:border-amber-800' : 'border-gray-100 dark:border-gray-700'
                   }`}>
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{budget.name}</h3>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         {budget.periodicity && (
                           <span className="text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
                             {PERIODICITY_LABEL[budget.periodicity] ?? budget.periodicity}
+                          </span>
+                        )}
+                        {budget.repeat_frequency !== 'none' && (
+                          <span className="text-[10px] text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                            <Repeat size={9} /> Auto
                           </span>
                         )}
                         <span className="text-[10px] text-gray-400">
@@ -231,7 +263,8 @@ export default function BudgetsPage() {
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${badgeClass(budget.spent, budget.planned_amount)}`}>
                         {pct}%
                       </span>
-                      <button onClick={() => handleDelete(budget.id)}
+                      <button
+                        onClick={() => setDeleteConfirm({ id: budget.id, name: budget.name })}
                         className="p-1 rounded-lg text-gray-300 hover:text-red-400 dark:text-gray-600 dark:hover:text-red-400 transition-colors">
                         <Trash2 size={14} />
                       </button>
@@ -262,10 +295,35 @@ export default function BudgetsPage() {
         )}
       </div>
 
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={e => { if (e.target === e.currentTarget) setDeleteConfirm(null); }}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-base font-semibold text-gray-800 dark:text-white mb-2">Eliminar presupuesto</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              ¿Eliminar <strong>"{deleteConfirm.name}"</strong>? Las transacciones asignadas no se borran.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteConfirm(null)}
+                className="flex-1 py-2 border border-gray-200 dark:border-gray-600 rounded-xl text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+                Cancelar
+              </button>
+              <button onClick={handleDeleteConfirmed} disabled={deleting}
+                className="flex-1 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+                {deleting && <RefreshCw size={13} className="animate-spin" />}
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Create modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) setShowModal(false); }}>
+          <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="text-lg font-bold text-gray-900 dark:text-white">Nuevo presupuesto</h2>
@@ -278,18 +336,18 @@ export default function BudgetsPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Emoji picker */}
+              {/* Quick presets */}
               <div>
-                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Ícono</label>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Sugerencias rápidas</label>
                 <div className="flex flex-wrap gap-1.5">
-                  {EMOJIS.map(e => (
-                    <button key={e} onClick={() => setForm(f => ({ ...f, emoji: e }))}
-                      className={`w-9 h-9 rounded-xl text-lg transition-colors ${
-                        form.emoji === e
-                          ? 'bg-indigo-100 dark:bg-indigo-900/40 ring-2 ring-indigo-500'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                  {BUDGET_PRESETS.map(p => (
+                    <button key={p.name} onClick={() => applyBudgetPreset(p)}
+                      className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                        form.name === p.name
+                          ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-400 text-indigo-700 dark:text-indigo-300'
+                          : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-indigo-300'
                       }`}>
-                      {e}
+                      {p.emoji} {p.name}
                     </button>
                   ))}
                 </div>
@@ -332,7 +390,7 @@ export default function BudgetsPage() {
                       className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                         form.presetIdx === i
                           ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-400'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600'
                       }`}>
                       {p.label}
                     </button>
@@ -341,9 +399,9 @@ export default function BudgetsPage() {
                     className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       form.presetIdx === -1
                         ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-400'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600'
                     }`}>
-                    Custom
+                    Personalizado
                   </button>
                 </div>
 
@@ -369,6 +427,31 @@ export default function BudgetsPage() {
                 )}
               </div>
 
+              {/* Repeat frequency */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                  <Repeat size={11} className="inline mr-1" />
+                  Repetición automática
+                </label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(['none', 'mensual', 'semanal', 'anual'] as RepeatFrequency[]).map(freq => (
+                    <button key={freq} onClick={() => setForm(f => ({ ...f, repeat_frequency: freq }))}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                        form.repeat_frequency === freq
+                          ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-400'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}>
+                      {freq === 'none' ? '🚫 Sin repetir' : freq === 'mensual' ? '📅 Mensual' : freq === 'semanal' ? '🗓️ Semanal' : '📆 Anual'}
+                    </button>
+                  ))}
+                </div>
+                {form.repeat_frequency !== 'none' && (
+                  <p className="text-[10px] text-indigo-500 mt-1.5">
+                    Al terminar el período, se creará automáticamente el siguiente.
+                  </p>
+                )}
+              </div>
+
               {/* Actions */}
               <div className="flex gap-3 pt-1">
                 <button onClick={() => setShowModal(false)}
@@ -377,7 +460,7 @@ export default function BudgetsPage() {
                 </button>
                 <button onClick={handleCreate}
                   disabled={!form.name.trim() || !form.amount || saving}
-                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium flex items-center justify-center gap-2">
                   {saving && <RefreshCw size={13} className="animate-spin" />}
                   {saving ? 'Guardando...' : 'Crear presupuesto'}
                 </button>

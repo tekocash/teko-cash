@@ -102,7 +102,12 @@ export const getFilteredTransactions = async (
   }
 
   if (filters.searchQuery) {
-    query = query.or(`concepto.ilike.%${filters.searchQuery}%,comercio.ilike.%${filters.searchQuery}%`);
+    const safe = filters.searchQuery
+      .slice(0, 100)
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_');
+    query = query.or(`concepto.ilike.%${safe}%,comercio.ilike.%${safe}%`);
   }
 
   // Completar la consulta con ordenamiento y paginación

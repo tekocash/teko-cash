@@ -11,7 +11,9 @@
       "Bash(npx tsc:*)",
       "Bash(ls \"c:\\\\Users\\\\betha\\\\teko-cash-claude\\\\teko-cash\\\\src\\\\supabase\"\" 2>/dev/null || echo \"no folder \")",
       "Bash(npm run:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(grep -n \"\\\\.env$\\\\|\\\\.env\\\\.local\" \"c:/Users/betha/teko-cash-claude/teko-cash/.gitignore\")",
+      "Bash(node -e \"console.log\\(new Date\\(\\).toISOString\\(\\).split\\(''T''\\)[0]\\); console.log\\(new Date\\(\\).toLocaleDateString\\(''en-CA''\\)\\);\")"
     ]
   }
 }

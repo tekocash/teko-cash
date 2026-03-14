@@ -48,7 +48,13 @@ export function useTransactions() {
 
       if (filters.direction !== 'all') q = q.eq('direction', filters.direction);
       if (filters.search) {
-        q = q.or(`concepto.ilike.%${filters.search}%,comercio.ilike.%${filters.search}%`);
+        // Limitar longitud y escapar caracteres especiales de LIKE (%, _, \)
+        const safe = filters.search
+          .slice(0, 100)
+          .replace(/\\/g, '\\\\')
+          .replace(/%/g, '\\%')
+          .replace(/_/g, '\\_');
+        q = q.or(`concepto.ilike.%${safe}%,comercio.ilike.%${safe}%`);
       }
 
       const { data, error } = await q;

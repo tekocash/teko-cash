@@ -67,6 +67,17 @@ export default function CategoryManagement() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
 
+  // ESC para cerrar modales
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (deleteConfirmId) { setDeleteConfirmId(null); return; }
+      if (formOpen) { setFormOpen(false); setEditingCategoryId(null); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [deleteConfirmId, formOpen]);
+
   // Mensaje de éxito/error
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -351,7 +362,10 @@ export default function CategoryManagement() {
 
       {/* Modal de crear/editar categoría */}
       {formOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={e => { if (e.target === e.currentTarget) { setFormOpen(false); setEditingCategoryId(null); } }}
+        >
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
           <div className="p-6">
           <div className="flex items-center justify-between mb-4">
@@ -575,7 +589,10 @@ export default function CategoryManagement() {
 
      {/* Modal de confirmación de eliminación */}
      {deleteConfirmId && (
-       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+       <div
+         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+         onClick={e => { if (e.target === e.currentTarget) setDeleteConfirmId(null); }}
+       >
          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6">
            <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-2">Eliminar categoría</h2>
            <p className="text-gray-600 dark:text-gray-300 mb-6">

@@ -62,14 +62,33 @@ DROP POLICY IF EXISTS "User category preferences: full access" ON public.user_ca
 CREATE POLICY "User category preferences: full access" ON public.user_category_preferences
   FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
+-- SECURITY DEFINER helpers to break RLS circular references between
+-- family_groups <-> family_group_participants
+-- These functions run with the privileges of the definer (bypassing RLS)
+-- so they can safely query each table without triggering infinite recursion.
+
+DROP FUNCTION IF EXISTS public.is_family_group_owner(uuid);
+CREATE OR REPLACE FUNCTION public.is_family_group_owner(gid uuid)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.family_groups WHERE id = gid AND owner_id = auth.uid()
+  );
+$$;
+
+DROP FUNCTION IF EXISTS public.is_active_family_member(gid uuid);
+CREATE OR REPLACE FUNCTION public.is_active_family_member(gid uuid)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.family_group_participants
+    WHERE group_id = gid AND user_id = auth.uid() AND status = 'active'
+  );
+$$;
+
 -- 5. family_groups
 ALTER TABLE public.family_groups ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Family groups: select if owner or member" ON public.family_groups;
 CREATE POLICY "Family groups: select if owner or member" ON public.family_groups FOR SELECT USING (
-  owner_id = auth.uid() OR id IN (
-    SELECT group_id FROM public.family_group_participants
-    WHERE user_id = auth.uid() AND status = 'active'
-  )
+  owner_id = auth.uid() OR public.is_active_family_member(id)
 );
 DROP POLICY IF EXISTS "Family groups: insert if owner" ON public.family_groups;
 CREATE POLICY "Family groups: insert if owner" ON public.family_groups FOR INSERT WITH CHECK (owner_id = auth.uid());
@@ -82,20 +101,17 @@ CREATE POLICY "Family groups: delete if owner" ON public.family_groups FOR DELET
 ALTER TABLE public.family_group_participants ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "FGP: select if participant or group owner" ON public.family_group_participants;
 CREATE POLICY "FGP: select if participant or group owner" ON public.family_group_participants FOR SELECT USING (
-  user_id = auth.uid() OR
-  group_id IN (SELECT id FROM public.family_groups WHERE owner_id = auth.uid())
+  user_id = auth.uid() OR public.is_family_group_owner(group_id)
 );
 DROP POLICY IF EXISTS "FGP: insert if self" ON public.family_group_participants;
 CREATE POLICY "FGP: insert if self" ON public.family_group_participants FOR INSERT WITH CHECK (user_id = auth.uid());
 DROP POLICY IF EXISTS "FGP: update if self or group owner" ON public.family_group_participants;
 CREATE POLICY "FGP: update if self or group owner" ON public.family_group_participants FOR UPDATE USING (
-  user_id = auth.uid() OR
-  group_id IN (SELECT id FROM public.family_groups WHERE owner_id = auth.uid())
+  user_id = auth.uid() OR public.is_family_group_owner(group_id)
 );
 DROP POLICY IF EXISTS "FGP: delete if self or group owner" ON public.family_group_participants;
 CREATE POLICY "FGP: delete if self or group owner" ON public.family_group_participants FOR DELETE USING (
-  user_id = auth.uid() OR
-  group_id IN (SELECT id FROM public.family_groups WHERE owner_id = auth.uid())
+  user_id = auth.uid() OR public.is_family_group_owner(group_id)
 );
 
 -- 7. balances
@@ -192,3 +208,49 @@ ALTER TABLE public.currencies ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Currencies: read for all authenticated" ON public.currencies;
 CREATE POLICY "Currencies: read for all authenticated" ON public.currencies
   FOR SELECT USING (auth.uid() IS NOT NULL);
+
+-- =============================================================
+-- SCHEMA ADDITIONS (run after RLS policies)
+-- =============================================================
+
+-- categories: per-user soft-delete (global categories can be hidden per user via user_category_preferences.is_enabled)
+-- The categories table itself doesn't need is_active — is_enabled in user_category_preferences covers the use case.
+-- If you want a global is_active for admin control, add:
+ALTER TABLE public.categories
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- budgets: repeat_frequency for auto-renewing budgets
+ALTER TABLE public.budgets
+  ADD COLUMN IF NOT EXISTS repeat_frequency TEXT
+    CHECK (repeat_frequency IN ('none','mensual','semanal','anual'))
+    NOT NULL DEFAULT 'none';
+
+-- user_payment_methods: add missing columns used by the TypeScript types
+ALTER TABLE public.user_payment_methods
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS icon      TEXT,
+  ADD COLUMN IF NOT EXISTS color     TEXT,
+  ADD COLUMN IF NOT EXISTS currency_id UUID REFERENCES public.currencies(id) ON DELETE SET NULL;
+
+-- transactions: add receipt_url for Supabase Storage receipts
+ALTER TABLE public.transactions
+  ADD COLUMN IF NOT EXISTS receipt_url TEXT;
+
+-- Supabase Storage bucket for receipts
+-- Run this in Supabase Dashboard → Storage → New Bucket (or via SQL):
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('receipts', 'receipts', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Storage RLS: users can only access their own receipts
+-- Path convention: receipts/{user_id}/{transaction_id}.{ext}
+DROP POLICY IF EXISTS "Receipts: owner access" ON storage.objects;
+CREATE POLICY "Receipts: owner access" ON storage.objects
+  FOR ALL USING (
+    bucket_id = 'receipts' AND
+    (storage.foldername(name))[1] = auth.uid()::text
+  )
+  WITH CHECK (
+    bucket_id = 'receipts' AND
+    (storage.foldername(name))[1] = auth.uid()::text
+  );
