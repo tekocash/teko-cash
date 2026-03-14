@@ -61,11 +61,12 @@ export const useAuthStore = create<AuthState>()(
       signInWithGoogle: async () => {
         try {
           set({ isLoading: true, error: null });
+          // Use the production site URL from Netlify build env, falling back to current origin
+          const siteUrl = import.meta.env.VITE_SITE_URL || window.location.origin;
           const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-              // Supabase redirige aquí después del OAuth; el cliente JS detecta la sesión automáticamente
-              redirectTo: `${window.location.origin}/dashboard`,
+              redirectTo: `${siteUrl}/dashboard`,
               queryParams: { prompt: 'select_account' },
             },
           });
