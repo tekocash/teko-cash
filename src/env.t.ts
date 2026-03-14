@@ -3,7 +3,7 @@
 interface ImportMetaEnv {
     readonly VITE_PUBLIC_SUPABASE_URL: string
     readonly VITE_PUBLIC_SUPABASE_ANON_KEY: string
-    // Otras variables...
+    readonly VITE_SITE_URL: string
   }
   
   interface ImportMeta {
