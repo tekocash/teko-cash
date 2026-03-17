@@ -6,8 +6,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
   define: {
-    // Expose Netlify's URL env var to the client so OAuth redirects use the production URL
-    'import.meta.env.VITE_SITE_URL': JSON.stringify(process.env.URL || ''),
+    // Prefer explicit VITE_SITE_URL and then fallback to Netlify URL envs.
+    'import.meta.env.VITE_SITE_URL': JSON.stringify(
+      process.env.VITE_SITE_URL || process.env.URL || process.env.DEPLOY_PRIME_URL || ''
+    ),
   },
   plugins: [
     react(),

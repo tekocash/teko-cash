@@ -61,8 +61,9 @@ export const useAuthStore = create<AuthState>()(
       signInWithGoogle: async () => {
         try {
           set({ isLoading: true, error: null });
-          // Use the production site URL from Netlify build env, falling back to current origin
-          const siteUrl = import.meta.env.VITE_SITE_URL || window.location.origin;
+          // Prioritize explicit site URL and normalize trailing slash for OAuth callback URL
+          const configuredSiteUrl = import.meta.env.VITE_SITE_URL?.trim();
+          const siteUrl = (configuredSiteUrl || window.location.origin).replace(/\/+$/, '');
           const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
