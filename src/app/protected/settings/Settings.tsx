@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthStore } from '@/store/auth-store';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'react-hot-toast';
 import {
   User, Shield, CreditCard, Bell, Save, Plus, X, Trash2,
   Eye, EyeOff, CheckCircle2, Smartphone, Mail, Calendar,
-  AlertTriangle, TrendingUp, Info,
+  AlertTriangle, TrendingUp, Info, Database, Download, Upload,
+  FileJson, FileSpreadsheet, AlertCircle,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const NOTIF_KEY = 'teko_notif_prefs';
 
@@ -35,6 +37,7 @@ const TABS = [
   { id: 'security', label: 'Seguridad', icon: Shield },
   { id: 'payment', label: 'Métodos de pago', icon: CreditCard },
   { id: 'notifications', label: 'Notificaciones', icon: Bell },
+  { id: 'data', label: 'Mis datos', icon: Database },
 ];
 
 interface PaymentMethod {
@@ -166,6 +169,215 @@ export default function SettingsPage() {
     if (error) { toast.error('Error al eliminar'); return; }
     toast.success('Método eliminado');
     loadPMs();
+  };
+
+  // Data export/import state
+  const [dataLoading, setDataLoading] = useState(false);
+  const [importResult, setImportResult] = useState<{ ok: number; failed: number; errors: string[] } | null>(null);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Export ──────────────────────────────────────────────────────────────
+  const handleExport = async () => {
+    if (!user?.id) return;
+    setDataLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select(`
+          id, direction, amount, date, concepto, comercio, nro_operacion,
+          periodicity, additional_info, created_at,
+          category:category_id (id, name, icon),
+          payment_method:payment_method_id (id, name),
+          currency:currency_id (id, code, symbol)
+        `)
+        .eq('user_id', user.id)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+
+      const backup = {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        user_email: user.email,
+        transactions: (data || []).map((t: any) => ({
+          id: t.id,
+          fecha: t.date,
+          tipo: t.direction,
+          monto: t.amount,
+          moneda: t.currency?.code ?? 'PYG',
+          concepto: t.concepto,
+          comercio: t.comercio,
+          categoria: t.category?.name ?? '',
+          categoria_icono: t.category?.icon ?? '',
+          metodo_pago: t.payment_method?.name ?? '',
+          nro_operacion: t.nro_operacion,
+          periodicidad: t.periodicity,
+          info_adicional: t.additional_info,
+          creado: t.created_at,
+        })),
+      };
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `teko-backup-${new Date().toLocaleDateString('en-CA')}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${backup.transactions.length} transacciones exportadas`);
+    } catch {
+      toast.error('Error al exportar');
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  // ── Import helpers ───────────────────────────────────────────────────────
+  const fetchLookups = async () => {
+    const [cats, pms, currencies] = await Promise.all([
+      supabase.from('categories').select('id, name').eq('user_id', user!.id),
+      supabase.from('user_payment_methods').select('id, name').eq('user_id', user!.id),
+      supabase.from('currencies').select('id, code'),
+    ]);
+    const catMap = new Map<string, string>((cats.data || []).map((c: any) => [c.name.toLowerCase(), c.id]));
+    const pmMap  = new Map<string, string>((pms.data  || []).map((p: any) => [p.name.toLowerCase(), p.id]));
+    const curMap = new Map<string, string>((currencies.data || []).map((c: any) => [c.code.toLowerCase(), c.id]));
+    return { catMap, pmMap, curMap };
+  };
+
+  const insertRows = async (rows: any[]): Promise<{ ok: number; failed: number; errors: string[] }> => {
+    let ok = 0; let failed = 0; const errors: string[] = [];
+    // Insert in batches of 50
+    for (let i = 0; i < rows.length; i += 50) {
+      const batch = rows.slice(i, i + 50);
+      const { error } = await supabase.from('transactions').insert(batch);
+      if (error) {
+        failed += batch.length;
+        errors.push(`Lote ${Math.floor(i / 50) + 1}: ${error.message}`);
+      } else {
+        ok += batch.length;
+      }
+    }
+    return { ok, failed, errors };
+  };
+
+  // ── Import JSON backup ───────────────────────────────────────────────────
+  const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user?.id) return;
+    e.target.value = '';
+    setDataLoading(true);
+    setImportResult(null);
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+      if (!backup.transactions || !Array.isArray(backup.transactions)) {
+        toast.error('Archivo inválido: no contiene transacciones');
+        return;
+      }
+      const { catMap, pmMap, curMap } = await fetchLookups();
+      const defaultCurId = curMap.get('pyg') ?? null;
+
+      const rows = backup.transactions.map((t: any) => ({
+        user_id: user.id,
+        direction: t.tipo === 'ingreso' ? 'ingreso' : 'gasto',
+        amount: Number(t.monto) || 0,
+        date: t.fecha,
+        concepto: t.concepto || null,
+        comercio: t.comercio || null,
+        nro_operacion: t.nro_operacion || null,
+        periodicity: t.periodicidad || null,
+        additional_info: t.info_adicional || null,
+        category_id: t.categoria ? (catMap.get(t.categoria.toLowerCase()) ?? null) : null,
+        payment_method_id: t.metodo_pago ? (pmMap.get(t.metodo_pago.toLowerCase()) ?? null) : null,
+        currency_id: t.moneda ? (curMap.get(t.moneda.toLowerCase()) ?? defaultCurId) : defaultCurId,
+      }));
+
+      const result = await insertRows(rows);
+      setImportResult(result);
+      if (result.ok > 0) toast.success(`${result.ok} transacciones importadas`);
+      if (result.failed > 0) toast.error(`${result.failed} fallaron`);
+    } catch (err: any) {
+      toast.error('Error al leer el archivo: ' + (err.message || 'desconocido'));
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  // ── Import Excel ─────────────────────────────────────────────────────────
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user?.id) return;
+    e.target.value = '';
+    setDataLoading(true);
+    setImportResult(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rawRows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      if (rawRows.length === 0) { toast.error('El archivo está vacío'); return; }
+
+      const { catMap, pmMap, curMap } = await fetchLookups();
+      const defaultCurId = curMap.get('pyg') ?? null;
+
+      // Flexible header aliases
+      const get = (row: any, ...keys: string[]) => {
+        for (const k of keys) {
+          const found = Object.keys(row).find(rk => rk.toLowerCase().replace(/[\s_]/g, '') === k.toLowerCase().replace(/[\s_]/g, ''));
+          if (found && row[found] !== '') return String(row[found]).trim();
+        }
+        return '';
+      };
+
+      const normalizeDate = (val: any): string | null => {
+        if (!val) return null;
+        if (val instanceof Date) return val.toLocaleDateString('en-CA');
+        const s = String(val).trim();
+        // Try dd/mm/yyyy
+        const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+        if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+        // Try yyyy-mm-dd
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        return null;
+      };
+
+      const rows = rawRows.map((row: any) => {
+        const tipoRaw = get(row, 'tipo', 'type', 'direction', 'tipo').toLowerCase();
+        const direction = tipoRaw.startsWith('ing') ? 'ingreso' : 'gasto';
+        const amountRaw = get(row, 'monto', 'amount', 'importe', 'valor');
+        const amount = Number(String(amountRaw).replace(/[^0-9.\-]/g, '')) || 0;
+        const dateRaw = get(row, 'fecha', 'date', 'dia', 'día');
+        const date = normalizeDate(dateRaw) ?? new Date().toLocaleDateString('en-CA');
+        const catName = get(row, 'categoria', 'category', 'categoría');
+        const pmName  = get(row, 'metodopago', 'paymentmethod', 'metododepago', 'metodo', 'payment');
+        const curCode = get(row, 'moneda', 'currency', 'coin') || 'PYG';
+
+        return {
+          user_id: user.id,
+          direction,
+          amount,
+          date,
+          concepto:          get(row, 'concepto', 'concept', 'descripcion', 'description', 'detalle') || null,
+          comercio:          get(row, 'comercio', 'merchant', 'comercio', 'tienda', 'store') || null,
+          nro_operacion:     get(row, 'nrooperacion', 'operacion', 'operation', 'referencia', 'nro') || null,
+          category_id:       catName ? (catMap.get(catName.toLowerCase()) ?? null) : null,
+          payment_method_id: pmName  ? (pmMap.get(pmName.toLowerCase())  ?? null) : null,
+          currency_id:       curMap.get(curCode.toLowerCase()) ?? defaultCurId,
+        };
+      });
+
+      const result = await insertRows(rows);
+      setImportResult(result);
+      if (result.ok > 0) toast.success(`${result.ok} transacciones importadas`);
+      if (result.failed > 0) toast.error(`${result.failed} fallaron`);
+    } catch (err: any) {
+      toast.error('Error al leer el Excel: ' + (err.message || 'desconocido'));
+    } finally {
+      setDataLoading(false);
+    }
   };
 
   const inputCls = "w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200";
@@ -523,6 +735,123 @@ export default function SettingsPage() {
               <CheckCircle2 size={13} />
               Preferencias guardadas automáticamente
             </div>
+          </div>
+        )}
+
+        {/* Data tab */}
+        {activeTab === 'data' && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-base font-semibold text-gray-800 dark:text-gray-200 mb-1">Mis datos</h2>
+              <p className="text-xs text-gray-400">Exportá o importá tus transacciones. Las categorías e importes se respetan tal cual están en el archivo.</p>
+            </div>
+
+            {/* Hidden file inputs */}
+            <input ref={jsonInputRef} type="file" accept=".json" className="hidden" onChange={handleImportJson} />
+            <input ref={xlsxInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImportExcel} />
+
+            {/* Export */}
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 p-5 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                  <Download size={17} className="text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Exportar backup</p>
+                  <p className="text-xs text-gray-400">Descargá todas tus transacciones en formato JSON</p>
+                </div>
+              </div>
+              <button
+                onClick={handleExport}
+                disabled={dataLoading}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+              >
+                <FileJson size={15} />
+                {dataLoading ? 'Exportando...' : 'Descargar backup (.json)'}
+              </button>
+            </div>
+
+            {/* Import JSON */}
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 p-5 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
+                  <Upload size={17} className="text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Importar backup</p>
+                  <p className="text-xs text-gray-400">Importá un archivo .json exportado desde Teko Cash</p>
+                </div>
+              </div>
+              <button
+                onClick={() => jsonInputRef.current?.click()}
+                disabled={dataLoading}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+              >
+                <FileJson size={15} />
+                {dataLoading ? 'Importando...' : 'Seleccionar archivo (.json)'}
+              </button>
+            </div>
+
+            {/* Import Excel */}
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-700 p-5 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                  <FileSpreadsheet size={17} className="text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Importar desde Excel / CSV</p>
+                  <p className="text-xs text-gray-400">Importá transacciones desde un archivo .xlsx, .xls o .csv</p>
+                </div>
+              </div>
+
+              {/* Column reference */}
+              <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-3">
+                <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">Columnas reconocidas (la primera fila debe ser el encabezado):</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                  {[
+                    ['Fecha', 'fecha, date, dia — dd/mm/yyyy o yyyy-mm-dd'],
+                    ['Tipo', 'tipo, type — "gasto" o "ingreso"'],
+                    ['Monto', 'monto, amount, importe, valor'],
+                    ['Concepto', 'concepto, descripcion, detalle'],
+                    ['Comercio', 'comercio, merchant, tienda'],
+                    ['Categoría', 'categoria, category — debe coincidir con tu lista'],
+                    ['Método pago', 'metodopago, metodo, payment — debe coincidir'],
+                    ['Moneda', 'moneda, currency — ej. PYG, USD (default PYG)'],
+                  ].map(([col, hint]) => (
+                    <div key={col}>
+                      <p className="text-[11px] font-medium text-gray-700 dark:text-gray-300">{col}</p>
+                      <p className="text-[10px] text-gray-400">{hint}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={() => xlsxInputRef.current?.click()}
+                disabled={dataLoading}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+              >
+                <FileSpreadsheet size={15} />
+                {dataLoading ? 'Importando...' : 'Seleccionar archivo (.xlsx / .csv)'}
+              </button>
+            </div>
+
+            {/* Import result */}
+            {importResult && (
+              <div className={`rounded-xl p-4 text-sm space-y-1 ${importResult.failed > 0 ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'}`}>
+                <div className="flex items-center gap-2 font-medium">
+                  {importResult.failed > 0
+                    ? <AlertCircle size={15} className="text-amber-600 dark:text-amber-400" />
+                    : <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400" />}
+                  <span className={importResult.failed > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}>
+                    {importResult.ok} importadas correctamente{importResult.failed > 0 ? `, ${importResult.failed} fallaron` : ''}
+                  </span>
+                </div>
+                {importResult.errors.map((e, i) => (
+                  <p key={i} className="text-xs text-amber-600 dark:text-amber-400 pl-5">{e}</p>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
