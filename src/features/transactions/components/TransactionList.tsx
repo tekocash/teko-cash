@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTransactions } from '../hooks/useTransactions';
+import { deleteTransaction, updateTransaction } from '../service/transaction-service';
+import { toast } from 'react-hot-toast';
 import {
   ArrowUpRight, ArrowDownRight, Search, RefreshCw, Plus, X, Calendar,
-  BarChart2, PieChart, List, TrendingDown,
+  BarChart2, PieChart, List, TrendingDown, Pencil, Trash2,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek,
@@ -49,6 +51,52 @@ export default function TransactionList() {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   const balance = totals.incomes - totals.expenses;
+
+  // Edit / Delete state
+  type EditForm = { id: string; concepto: string; comercio: string; amount: string; date: string; direction: 'income' | 'expense' };
+  const [editTx, setEditTx] = useState<EditForm | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteTx, setDeleteTx] = useState<{ id: string; concepto: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const openEdit = (tx: any) => {
+    setEditTx({
+      id: tx.id,
+      concepto: tx.concepto || '',
+      comercio: tx.comercio || '',
+      amount: String(tx.amount),
+      date: tx.date.slice(0, 10),
+      direction: tx.direction,
+    });
+  };
+
+  const handleEditSave = async () => {
+    if (!editTx) return;
+    setEditSaving(true);
+    const { error } = await updateTransaction(editTx.id, {
+      concepto: editTx.concepto || null,
+      comercio: editTx.comercio || null,
+      amount: Number(editTx.amount),
+      date: editTx.date,
+      direction: editTx.direction,
+    } as any);
+    setEditSaving(false);
+    if (error) { toast.error('Error al guardar'); return; }
+    toast.success('Transacción actualizada');
+    setEditTx(null);
+    reload();
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTx) return;
+    setDeleting(true);
+    const { error } = await deleteTransaction(deleteTx.id);
+    setDeleting(false);
+    setDeleteTx(null);
+    if (error) { toast.error('Error al eliminar'); return; }
+    toast.success('Transacción eliminada');
+    reload();
+  };
 
   const applyPeriod = (idx: number) => {
     setActivePeriod(idx);
@@ -383,17 +431,18 @@ export default function TransactionList() {
           ) : (
             <>
               {/* Table header */}
-              <div className="hidden sm:grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-x-4 px-4 py-2 bg-gray-50 dark:bg-gray-700/60 border-b border-gray-100 dark:border-gray-700 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+              <div className="hidden sm:grid grid-cols-[2fr_1fr_1fr_1fr_auto_auto] gap-x-4 px-4 py-2 bg-gray-50 dark:bg-gray-700/60 border-b border-gray-100 dark:border-gray-700 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
                 <span>Concepto / Comercio</span>
                 <span>Categoría</span>
                 <span>Fecha</span>
                 <span className="text-right">Monto</span>
                 <span>Tipo</span>
+                <span></span>
               </div>
 
               <div className="divide-y divide-gray-50 dark:divide-gray-700">
                 {items.map(tx => (
-                  <div key={tx.id} className="flex sm:grid sm:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-x-4 items-center px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                  <div key={tx.id} className="flex sm:grid sm:grid-cols-[2fr_1fr_1fr_1fr_auto_auto] gap-x-4 items-center px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group">
                     {/* Concepto + icon */}
                     <div className="flex items-center gap-3 min-w-0 flex-1 sm:flex-none">
                       <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
@@ -446,6 +495,18 @@ export default function TransactionList() {
                         {tx.direction === 'income' ? 'Ingreso' : 'Gasto'}
                       </span>
                     </div>
+
+                    {/* Actions */}
+                    <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openEdit(tx)}
+                        className="p-1 rounded-lg text-gray-300 hover:text-indigo-500 dark:text-gray-600 dark:hover:text-indigo-400 transition-colors">
+                        <Pencil size={13} />
+                      </button>
+                      <button onClick={() => setDeleteTx({ id: tx.id, concepto: tx.concepto || 'Sin concepto' })}
+                        className="p-1 rounded-lg text-gray-300 hover:text-red-400 dark:text-gray-600 dark:hover:text-red-400 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -474,6 +535,85 @@ export default function TransactionList() {
         <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border border-gray-100 dark:border-gray-700">
           <BarChart2 size={32} className="mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-400">No hay datos para analizar en este período</p>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editTx && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) setEditTx(null); }}>
+          <div className="w-full max-w-sm bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">Editar transacción</h3>
+              <button onClick={() => setEditTx(null)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-3">
+              {/* Direction */}
+              <div className="flex gap-2">
+                {(['expense', 'income'] as const).map(dir => (
+                  <button key={dir} onClick={() => setEditTx(t => t ? ({ ...t, direction: dir }) : t)}
+                    className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${
+                      editTx.direction === dir
+                        ? dir === 'income' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                    }`}>
+                    {dir === 'income' ? '↑ Ingreso' : '↓ Gasto'}
+                  </button>
+                ))}
+              </div>
+              {[
+                { label: 'Monto', key: 'amount' as const, type: 'number', placeholder: '0' },
+                { label: 'Concepto', key: 'concepto' as const, type: 'text', placeholder: 'Ej. Compra supermercado' },
+                { label: 'Comercio', key: 'comercio' as const, type: 'text', placeholder: 'Ej. Stock Center' },
+                { label: 'Fecha', key: 'date' as const, type: 'date', placeholder: '' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{f.label}</label>
+                  <input type={f.type} value={editTx[f.key]} placeholder={f.placeholder}
+                    onChange={e => setEditTx(t => t ? ({ ...t, [f.key]: e.target.value }) : t)}
+                    className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200"
+                  />
+                </div>
+              ))}
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setEditTx(null)}
+                  className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-gray-600 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+                  Cancelar
+                </button>
+                <button onClick={handleEditSave} disabled={editSaving}
+                  className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-medium flex items-center justify-center gap-2">
+                  {editSaving && <RefreshCw size={13} className="animate-spin" />}
+                  Guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm modal */}
+      {deleteTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={e => { if (e.target === e.currentTarget) setDeleteTx(null); }}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-base font-semibold text-gray-800 dark:text-white mb-2">Eliminar transacción</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              ¿Eliminar <strong>"{deleteTx.concepto}"</strong>? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteTx(null)}
+                className="flex-1 py-2 border border-gray-200 dark:border-gray-600 rounded-xl text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+                Cancelar
+              </button>
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex-1 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+                {deleting && <RefreshCw size={13} className="animate-spin" />}
+                Eliminar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -3,7 +3,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useBudgets, PERIOD_PRESETS, RepeatFrequency } from '@/features/budgets/hooks/useBudgets';
 import { toast } from 'react-hot-toast';
-import { Plus, X, AlertTriangle, TrendingUp, Trash2, RefreshCw, Wallet, Info, Repeat } from 'lucide-react';
+import { Plus, X, AlertTriangle, TrendingUp, Trash2, RefreshCw, Wallet, Info, Repeat, Pencil } from 'lucide-react';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
@@ -46,9 +46,10 @@ const BUDGET_PRESETS = [
 const now = new Date();
 
 export default function BudgetsPage() {
-  const { budgets, isLoading, error, reload, createBudget, deleteBudget, totalBudgeted, totalSpent } = useBudgets();
+  const { budgets, isLoading, error, reload, createBudget, deleteBudget, updateBudget, totalBudgeted, totalSpent } = useBudgets();
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editingBudgetId, setEditingBudgetId] = useState<string | null>(null);
 
   // Delete confirm state
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
@@ -92,24 +93,51 @@ export default function BudgetsPage() {
   };
 
   const openModal = () => {
+    setEditingBudgetId(null);
     setForm({ emoji: '💰', name: '', amount: '', presetIdx: 0, start_date: PERIOD_PRESETS[0].start, end_date: PERIOD_PRESETS[0].end, repeat_frequency: 'mensual' });
     setShowModal(true);
   };
 
-  const handleCreate = async () => {
+  const openEdit = (budget: typeof budgets[0]) => {
+    // Try to split emoji from name (first char may be emoji)
+    const parts = budget.name.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)\s*(.*)$/u);
+    const emoji = parts ? parts[1] : '💰';
+    const name = parts ? parts[2] : budget.name;
+    const presetIdx = PERIOD_PRESETS.findIndex(p => p.start === budget.start_date && p.end === budget.end_date);
+    setEditingBudgetId(budget.id);
+    setForm({
+      emoji,
+      name,
+      amount: String(budget.planned_amount),
+      presetIdx: presetIdx >= 0 ? presetIdx : 0,
+      start_date: budget.start_date,
+      end_date: budget.end_date,
+      repeat_frequency: budget.repeat_frequency,
+    });
+    setShowModal(true);
+  };
+
+  const handleSave = async () => {
     if (!form.name.trim() || !form.amount) return;
     setSaving(true);
-    const { error: err } = await createBudget({
+    const input = {
       name: `${form.emoji} ${form.name.trim()}`,
       planned_amount: Number(form.amount),
       periodicity: PERIOD_PRESETS[form.presetIdx]?.value ?? 'mensual',
       repeat_frequency: form.repeat_frequency,
       start_date: form.start_date,
       end_date: form.end_date,
-    });
+    };
+    const { error: err } = editingBudgetId
+      ? await updateBudget(editingBudgetId, input)
+      : await createBudget(input);
     setSaving(false);
-    if (err) toast.error('Error al crear presupuesto');
-    else { toast.success('Presupuesto creado'); setShowModal(false); }
+    if (err) toast.error(editingBudgetId ? 'Error al actualizar' : 'Error al crear presupuesto');
+    else {
+      toast.success(editingBudgetId ? 'Presupuesto actualizado' : 'Presupuesto creado');
+      setShowModal(false);
+      setEditingBudgetId(null);
+    }
   };
 
   const handleDeleteConfirmed = async () => {
@@ -259,14 +287,19 @@ export default function BudgetsPage() {
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${badgeClass(budget.spent, budget.planned_amount)}`}>
                         {pct}%
                       </span>
                       <button
+                        onClick={() => openEdit(budget)}
+                        className="p-1 rounded-lg text-gray-300 hover:text-indigo-500 dark:text-gray-600 dark:hover:text-indigo-400 transition-colors">
+                        <Pencil size={13} />
+                      </button>
+                      <button
                         onClick={() => setDeleteConfirm({ id: budget.id, name: budget.name })}
                         className="p-1 rounded-lg text-gray-300 hover:text-red-400 dark:text-gray-600 dark:hover:text-red-400 transition-colors">
-                        <Trash2 size={14} />
+                        <Trash2 size={13} />
                       </button>
                     </div>
                   </div>
@@ -326,7 +359,9 @@ export default function BudgetsPage() {
           <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h2 className="text-lg font-bold text-gray-900 dark:text-white">Nuevo presupuesto</h2>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+                  {editingBudgetId ? 'Editar presupuesto' : 'Nuevo presupuesto'}
+                </h2>
                 <p className="text-xs text-gray-400 mt-0.5">Estimá cuánto querés gastar en este período</p>
               </div>
               <button onClick={() => setShowModal(false)}
@@ -458,11 +493,11 @@ export default function BudgetsPage() {
                   className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-gray-600 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">
                   Cancelar
                 </button>
-                <button onClick={handleCreate}
+                <button onClick={handleSave}
                   disabled={!form.name.trim() || !form.amount || saving}
                   className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium flex items-center justify-center gap-2">
                   {saving && <RefreshCw size={13} className="animate-spin" />}
-                  {saving ? 'Guardando...' : 'Crear presupuesto'}
+                  {saving ? 'Guardando...' : editingBudgetId ? 'Guardar cambios' : 'Crear presupuesto'}
                 </button>
               </div>
             </div>

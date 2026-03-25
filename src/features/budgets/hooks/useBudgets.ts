@@ -245,12 +245,33 @@ export function useBudgets() {
     return { error };
   };
 
+  const updateBudget = async (id: string, input: CreateBudgetInput): Promise<{ error: any }> => {
+    if (!user?.id) return { error: 'No hay sesión activa' };
+    const month = format(new Date(input.start_date + 'T12:00:00'), 'yyyy-MM');
+    const { error } = await supabase
+      .from('budgets')
+      .update({
+        name: input.name.trim(),
+        planned_amount: input.planned_amount,
+        amount: input.planned_amount,
+        start_date: input.start_date,
+        end_date: input.end_date,
+        month,
+        periodicity: input.periodicity,
+        repeat_frequency: input.repeat_frequency,
+      })
+      .eq('id', id)
+      .eq('user_id', user.id);
+    if (!error) await load();
+    return { error };
+  };
+
   const currentMonth = format(new Date(), 'yyyy-MM');
   const currentBudgets = budgets.filter(b => b.month === currentMonth);
   const totalBudgeted = currentBudgets.reduce((s, b) => s + b.planned_amount, 0);
   const totalSpent = currentBudgets.reduce((s, b) => s + b.spent, 0);
 
-  return { budgets, isLoading, error, reload: load, createBudget, deleteBudget, totalBudgeted, totalSpent };
+  return { budgets, isLoading, error, reload: load, createBudget, deleteBudget, updateBudget, totalBudgeted, totalSpent };
 }
 
 // Period presets — dates computed once at module level

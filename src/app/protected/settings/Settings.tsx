@@ -187,9 +187,9 @@ export default function SettingsPage() {
         .select(`
           id, direction, amount, date, concepto, comercio, nro_operacion,
           periodicity, additional_info, created_at,
-          category:category_id (id, name, icon),
-          payment_method:payment_method_id (id, name),
-          currency:currency_id (id, code, symbol)
+          category:category_id (*),
+          payment_method:payment_method_id (*),
+          currency:currency_id (*)
         `)
         .eq('user_id', user.id)
         .order('date', { ascending: false });

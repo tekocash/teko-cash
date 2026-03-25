@@ -422,7 +422,7 @@ export default function CategoryManagement() {
                 className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white flex items-center"
               >
                 <span className="text-xl mr-2">{formData.icon}</span>
-                <span>{formData.icon} - Cambiar icono</span>
+                <span>Cambiar icono</span>
               </button>
               
               {showEmojiPicker && (
