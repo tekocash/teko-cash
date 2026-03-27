@@ -6,9 +6,13 @@ import {
   User, Shield, CreditCard, Bell, Save, Plus, X, Trash2,
   Eye, EyeOff, CheckCircle2, Smartphone, Mail, Calendar,
   AlertTriangle, TrendingUp, Info, Database, Download, Upload,
-  FileJson, FileSpreadsheet, AlertCircle,
+  FileJson, FileSpreadsheet, AlertCircle, ChevronDown,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import {
+  importBankStatement, detectFormat, formatLabel,
+  type BankFormat, type ImportResult,
+} from '@/features/transactions/service/bank-importer';
 
 const NOTIF_KEY = 'teko_notif_prefs';
 
@@ -176,6 +180,15 @@ export default function SettingsPage() {
   const [importResult, setImportResult] = useState<{ ok: number; failed: number; errors: string[] } | null>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
+
+  // Smart bank importer state
+  const bankInputRef = useRef<HTMLInputElement>(null);
+  const selectedBankFile = useRef<File | null>(null);
+  const [bankFormat, setBankFormat] = useState<BankFormat | null>(null);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankProgress, setBankProgress] = useState<{ pct: number; msg: string } | null>(null);
+  const [bankResult, setBankResult] = useState<ImportResult | null>(null);
+  const [analysisExpanded, setAnalysisExpanded] = useState(false);
 
   // ── Export ──────────────────────────────────────────────────────────────
   const handleExport = async () => {
@@ -377,6 +390,54 @@ export default function SettingsPage() {
       toast.error('Error al leer el Excel: ' + (err.message || 'desconocido'));
     } finally {
       setDataLoading(false);
+    }
+  };
+
+  // ── Smart bank file selection (preview format only) ──────────────────────
+  const handleBankFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    selectedBankFile.current = file;
+    setBankResult(null);
+    setBankProgress(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      setBankFormat(detectFormat(wb, buf));
+    } catch {
+      setBankFormat('generic');
+    }
+  };
+
+  const handleImportBankStatement = async () => {
+    const file = selectedBankFile.current;
+    if (!file || !user?.id) return;
+    setBankLoading(true);
+    setBankResult(null);
+    setBankProgress({ pct: 0, msg: 'Iniciando...' });
+    try {
+      const lookups = await fetchLookups();
+      const result = await importBankStatement(
+        file, user.id, lookups,
+        (pct, msg) => setBankProgress({ pct, msg })
+      );
+      setBankResult(result);
+      // Persist for dashboard alert
+      localStorage.setItem('teko_last_import_analysis', JSON.stringify({
+        savedAt: new Date().toISOString(),
+        analysis: result.analysis,
+        format: result.format,
+      }));
+      if (result.ok > 0) toast.success(`${result.ok} transacciones importadas`);
+      if (result.duplicatesSkipped > 0) toast(`${result.duplicatesSkipped} duplicadas omitidas`, { icon: 'ℹ️' });
+      if (result.failed > 0) toast.error(`${result.failed} fallaron`);
+    } catch (err: any) {
+      toast.error('Error al importar: ' + (err.message || 'desconocido'));
+    } finally {
+      setBankLoading(false);
+      setBankProgress(null);
+      selectedBankFile.current = null;
+      if (bankInputRef.current) bankInputRef.current.value = '';
     }
   };
 
@@ -834,6 +895,185 @@ export default function SettingsPage() {
                 <FileSpreadsheet size={15} />
                 {dataLoading ? 'Importando...' : 'Seleccionar archivo (.xlsx / .csv)'}
               </button>
+            </div>
+
+            {/* Smart bank importer */}
+            <div className="rounded-2xl border border-violet-200 dark:border-violet-800 bg-violet-50/40 dark:bg-violet-900/10 p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center">
+                  <Database size={17} className="text-violet-600 dark:text-violet-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Importar extracto bancario</p>
+                  <p className="text-xs text-gray-400">Detecta el formato automáticamente • Atlas Bank, Itaú Tarjeta, Itaú Ahorro</p>
+                </div>
+              </div>
+
+              <input ref={bankInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBankFileChange} />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => bankInputRef.current?.click()}
+                  disabled={bankLoading}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-300 dark:border-violet-700 bg-white dark:bg-gray-800 text-violet-700 dark:text-violet-300 text-sm font-medium hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors disabled:opacity-50"
+                >
+                  <Upload size={14} />
+                  Seleccionar archivo
+                </button>
+
+                {bankFormat && !bankLoading && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-xs font-medium">
+                    {formatLabel(bankFormat)}
+                  </span>
+                )}
+
+                {selectedBankFile.current && !bankLoading && (
+                  <button
+                    onClick={handleImportBankStatement}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors"
+                  >
+                    <FileSpreadsheet size={14} />
+                    Importar ahora
+                  </button>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              {bankLoading && bankProgress && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>{bankProgress.msg}</span>
+                    <span>{bankProgress.pct}%</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-violet-500 rounded-full transition-all duration-300"
+                      style={{ width: `${bankProgress.pct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Results */}
+              {bankResult && (
+                <div className="space-y-3">
+                  <div className={`rounded-xl p-4 text-sm space-y-2 ${bankResult.failed > 0 ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'}`}>
+                    <div className="flex items-center gap-2 font-semibold">
+                      <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span className="text-emerald-700 dark:text-emerald-300">
+                        {bankResult.ok} importadas • {bankResult.duplicatesSkipped} duplicadas omitidas{bankResult.failed > 0 ? ` • ${bankResult.failed} fallaron` : ''}
+                      </span>
+                    </div>
+                    {bankResult.newCategoriesCreated.length > 0 && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Categorías creadas: {bankResult.newCategoriesCreated.map(c => <span key={c} className="inline-block bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-full px-2 py-0.5 mr-1 mb-0.5">{c}</span>)}
+                      </p>
+                    )}
+                    {bankResult.newPaymentMethodsCreated.length > 0 && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Métodos creados: {bankResult.newPaymentMethodsCreated.map(p => <span key={p} className="inline-block bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full px-2 py-0.5 mr-1">{p}</span>)}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Analysis accordion */}
+                  <button
+                    onClick={() => setAnalysisExpanded(x => !x)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700/60 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <span>📊 Análisis financiero del extracto</span>
+                    <ChevronDown size={15} className={`transition-transform ${analysisExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {analysisExpanded && (() => {
+                    const a = bankResult.analysis;
+                    const fmt = (n: number, cur = 'PYG') => cur === 'USD'
+                      ? `$${n.toLocaleString('es-PY', { maximumFractionDigits: 2 })}`
+                      : new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
+                    return (
+                      <div className="rounded-xl border border-gray-100 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 text-sm">
+                        {/* Summary */}
+                        <div className="grid grid-cols-3 gap-0">
+                          {[
+                            { label: 'Ingresos', value: fmt(a.totalIncome), color: 'text-emerald-600 dark:text-emerald-400' },
+                            { label: 'Gastos', value: fmt(a.totalExpenses), color: 'text-red-500 dark:text-red-400' },
+                            { label: 'Balance', value: fmt(a.netBalance), color: a.netBalance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400' },
+                          ].map(s => (
+                            <div key={s.label} className="p-3 text-center">
+                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">{s.label}</p>
+                              <p className={`text-xs font-bold mt-0.5 ${s.color}`}>{s.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Period */}
+                        {a.dateRange.from && (
+                          <div className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                            Período: <strong>{a.dateRange.from}</strong> → <strong>{a.dateRange.to}</strong> · {a.transactionCount} transacciones
+                          </div>
+                        )}
+                        {/* Top categories */}
+                        {a.topCategories.length > 0 && (
+                          <div className="p-4 space-y-2">
+                            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Top categorías de gasto</p>
+                            {a.topCategories.map(c => (
+                              <div key={c.name} className="flex items-center gap-2">
+                                <span className="text-xs text-gray-600 dark:text-gray-300 w-36 truncate">{c.name}</span>
+                                <div className="flex-1 h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                                  <div className="h-full bg-violet-400 rounded-full" style={{ width: `${Math.min(100, (c.total / a.topCategories[0].total) * 100)}%` }} />
+                                </div>
+                                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">{fmt(c.total)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Recurring */}
+                        {a.recurringExpenses.length > 0 && (
+                          <div className="p-4 space-y-1.5">
+                            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Gastos recurrentes detectados</p>
+                            {a.recurringExpenses.slice(0, 5).map(r => (
+                              <div key={r.description} className="flex items-center justify-between">
+                                <span className="text-xs text-gray-600 dark:text-gray-300 truncate max-w-[200px]">{r.description}</span>
+                                <span className="text-xs text-gray-400">{r.occurrences}× · {fmt(r.avgAmount)}/vez</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Debts */}
+                        {a.detectedDebts.length > 0 && (
+                          <div className="px-4 py-3">
+                            <p className="text-xs font-semibold text-red-500 uppercase tracking-wide mb-1">Préstamos / cuotas detectadas ({a.detectedDebts.length})</p>
+                            {a.detectedDebts.slice(0, 4).map((d, i) => (
+                              <p key={i} className="text-xs text-gray-500 dark:text-gray-400 truncate">{d.description} · {fmt(d.amount)}</p>
+                            ))}
+                          </div>
+                        )}
+                        {/* Foreign */}
+                        {a.foreignExpenses.length > 0 && (
+                          <div className="px-4 py-3">
+                            <p className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">Gastos exterior / USD ({a.foreignExpenses.length})</p>
+                            {a.foreignExpenses.slice(0, 4).map((f, i) => (
+                              <p key={i} className="text-xs text-gray-500 dark:text-gray-400 truncate">{f.description} · {fmt(f.amount, f.currency)}</p>
+                            ))}
+                          </div>
+                        )}
+                        {/* Monthly trend */}
+                        {a.monthlyTrend.length > 1 && (
+                          <div className="p-4 space-y-2">
+                            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Tendencia mensual</p>
+                            {a.monthlyTrend.map(m => (
+                              <div key={m.month} className="flex items-center gap-2 text-xs">
+                                <span className="text-gray-400 w-16">{m.month}</span>
+                                <span className="text-emerald-600 dark:text-emerald-400 w-28 truncate">↑ {fmt(m.incomes)}</span>
+                                <span className="text-red-500 dark:text-red-400 truncate">↓ {fmt(m.expenses)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
 
             {/* Import result */}

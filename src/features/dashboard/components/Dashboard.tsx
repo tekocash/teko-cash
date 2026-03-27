@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import { useDashboardData } from '../hooks/useDashboardData';
@@ -21,6 +21,8 @@ import {
   Plus,
   ChevronRight,
   AlertCircle,
+  X,
+  BarChart3,
 } from 'lucide-react';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -47,6 +49,18 @@ export default function Dashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
   const { isLoading, recentTx, totals, categories, monthly, error, reload } = useDashboardData();
+
+  // Import analysis alert from localStorage (TTL 24h)
+  const [importAlert, setImportAlert] = useState<{ analysis: any; format: string } | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('teko_last_import_analysis');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const age = Date.now() - new Date(parsed.savedAt).getTime();
+      if (age < 86400000) setImportAlert({ analysis: parsed.analysis, format: parsed.format });
+    } catch {}
+  }, []);
 
   const doughnutData = {
     labels: categories.map(c => c.name),
@@ -104,6 +118,31 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Import analysis alert */}
+      {importAlert && (
+        <div className="flex items-start gap-3 p-4 rounded-2xl bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800">
+          <BarChart3 size={18} className="text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-violet-800 dark:text-violet-200">Análisis de última importación disponible</p>
+            <p className="text-xs text-violet-600 dark:text-violet-400 mt-0.5">
+              {importAlert.analysis.transactionCount} transacciones importadas · Ingresos {fmt(importAlert.analysis.totalIncome)} · Gastos {fmt(importAlert.analysis.totalExpenses)}
+            </p>
+            <button
+              onClick={() => navigate('/settings')}
+              className="text-xs text-violet-700 dark:text-violet-300 underline mt-1"
+            >
+              Ver análisis completo en Configuración → Mis datos
+            </button>
+          </div>
+          <button
+            onClick={() => { setImportAlert(null); localStorage.removeItem('teko_last_import_analysis'); }}
+            className="p-1 rounded-lg text-violet-400 hover:text-violet-600 dark:hover:text-violet-200"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
