@@ -1,4 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, lazy, Suspense } from 'react';
+const FinancialBoard = lazy(() => import('./FinancialBoard'));
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import { useDashboardData } from '../hooks/useDashboardData';
@@ -346,6 +347,11 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* Financial vision board */}
+      <Suspense fallback={<div className="rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-8 text-center text-sm text-gray-400">Cargando tablero financiero...</div>}>
+        <FinancialBoard />
+      </Suspense>
     </div>
   );
 }

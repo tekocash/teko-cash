@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase/client';
 import { createCategory } from '@/features/categories/services/category-service';
+import type { ParsedCardTransaction } from './pdf-parser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -426,6 +427,46 @@ async function buildFingerprintSet(userId: string, dateFrom: string, dateTo: str
     set.add(fp);
   }
   return set;
+}
+
+// ── PDF transactions → PreviewRow[] ──────────────────────────────────────────
+
+/**
+ * Convert parsed PDF credit-card transactions into the standard PreviewRow[]
+ * format (with duplicate check + auto-categorisation) so they can be reviewed
+ * and imported through the same preview flow as bank-XLSX imports.
+ */
+export async function pdfTxsToPreviewRows(
+  txs: ParsedCardTransaction[],
+  userId: string
+): Promise<PreviewRow[]> {
+  if (txs.length === 0) return [];
+
+  const dates = txs.map(t => t.opDate).filter(Boolean).sort();
+  const dbFingerprints = await buildFingerprintSet(userId, dates[0], dates[dates.length - 1]);
+  const withinFileSet = new Set<string>();
+
+  return txs.map(tx => {
+    const direction: 'income' | 'expense' = tx.section === 'pagos' ? 'income' : 'expense';
+    const fp = fingerprint({ date: tx.opDate, amount: tx.amount, direction, currency: tx.currency, description: tx.description });
+    const isDuplicate = dbFingerprints.has(fp) || withinFileSet.has(fp);
+    if (!isDuplicate) withinFileSet.add(fp);
+    const rule = autoCategorize(tx.description);
+    return {
+      date: tx.opDate,
+      amount: tx.amount,
+      direction,
+      description: tx.description,
+      reference: tx.coupon,
+      currency: tx.currency,
+      previewId: newPreviewId(),
+      isDuplicate,
+      suggestedCategory: rule?.name ?? null,
+      suggestedCategoryType: rule?.type ?? null,
+      selected: !isDuplicate,
+      budgetId: null,
+    } satisfies PreviewRow;
+  });
 }
 
 // ── STEP 1: Parse + preview (NO DB insert) ────────────────────────────────────

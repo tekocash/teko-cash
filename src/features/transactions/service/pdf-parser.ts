@@ -68,10 +68,7 @@ export interface ParsedCardStatement {
 // ── PDF text extraction ────────────────────────────────────────────────────────
 
 async function extractPdfText(file: File): Promise<string> {
-  // Dynamic import to keep bundle lean
   const pdfjsLib = await import('pdfjs-dist');
-
-  // Set worker from local Vite-bundled asset (avoids CDN fetch failures)
   if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   }
@@ -83,20 +80,40 @@ async function extractPdfText(file: File): Promise<string> {
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    // Join items preserving approximate layout with newlines at Y breaks
-    let lastY: number | null = null;
-    const lineBuffer: string[] = [];
-    const lines: string[] = [];
+
+    // Collect raw items with their exact x/y position
+    const rawItems: { x: number; y: number; str: string }[] = [];
     for (const item of content.items as TextItem[]) {
-      const y = Math.round(item.transform[5]);
-      if (lastY !== null && Math.abs(y - lastY) > 2) {
-        lines.push(lineBuffer.join(' '));
-        lineBuffer.length = 0;
-      }
-      lineBuffer.push(item.str);
-      lastY = y;
+      const str = item.str;
+      if (!str.trim()) continue;
+      rawItems.push({ x: item.transform[4], y: item.transform[5], str });
     }
-    if (lineBuffer.length) lines.push(lineBuffer.join(' '));
+
+    // Bucket-based Y grouping with 8pt tolerance.
+    // Each bucket keeps its representative Y (first item's Y).
+    // This groups all cells of the same table row even if their baselines
+    // differ by a few points (which pdfjs commonly produces).
+    const buckets: { repY: number; items: { x: number; str: string }[] }[] = [];
+    for (const { x, y, str } of rawItems) {
+      const b = buckets.find(bk => Math.abs(bk.repY - y) <= 8);
+      if (b) {
+        b.items.push({ x, str });
+      } else {
+        buckets.push({ repY: y, items: [{ x, str }] });
+      }
+    }
+
+    // Sort buckets top-to-bottom (PDF coords: high Y = top of page)
+    buckets.sort((a, b) => b.repY - a.repY);
+
+    const lines: string[] = [];
+    for (const bk of buckets) {
+      // Sort items left-to-right to preserve column order
+      bk.items.sort((a, b) => a.x - b.x);
+      const line = bk.items.map(i => i.str).join(' ').trim();
+      if (line) lines.push(line);
+    }
+
     pages.push(lines.join('\n'));
   }
   return pages.join('\n--- PAGE BREAK ---\n');
@@ -242,47 +259,51 @@ function parseUenoSummary(text: string): CardFinancialSummary {
  */
 function parseUenoTransactions(text: string): ParsedCardTransaction[] {
   const rows: ParsedCardTransaction[] = [];
-
-  // Split into lines and find transaction section
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // Heuristic: transaction rows look like: DD/MM/YY DD/MM/YY <coupon> <desc...> S/N S/N <amount>
-  const txLineRe = /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(\S+)\s+(.+?)\s+(S|N)\s+(S|N)\s+([\d\.]+)\s*$/;
+  // Pattern A: full columns — DD/MM/YY DD/MM/YY [coupon] description [S/N S/N] amount
+  // coupon, FIN, IVA are optional
+  const fullRe  = /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(?:(\d{5,})\s+)?(.+?)\s+(?:(S|N)\s+(S|N)\s+)?([\d\.]{3,})\s*$/i;
+  // Pattern B: single date + description + amount  (some PDFs only expose op date)
+  const singleRe = /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+?)\s+([\d\.]{4,})\s*$/;
+
+  const SKIP = /fec\.?|detalle|cup[oó]n|fecha|concepto|monto|importe|saldo|total|pag[oi]n|extracto|^\s*n[oú°]/i;
 
   for (const line of lines) {
-    const m = line.match(txLineRe);
-    if (!m) continue;
-    const [, opDateRaw, procDateRaw, coupon, description, fin, iva, amtRaw] = m;
-    rows.push({
-      opDate: parseDateDDMMYYYY(opDateRaw),
-      processDate: parseDateDDMMYYYY(procDateRaw),
-      coupon,
-      description: description.trim(),
-      amount: parsePYGAmount(amtRaw),
-      currency: 'PYG',
-      isFinanceable: fin === 'S',
-      hasIva: iva === 'S',
-    });
-  }
-
-  // Fallback: looser pattern — just two dates followed by description and amount at end
-  if (rows.length === 0) {
-    const looseTxRe = /(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+([\d\.]{4,})\s*$/;
-    for (const line of lines) {
-      const m = line.match(looseTxRe);
-      if (!m) continue;
-      const [, opDateRaw, procDateRaw, description, amtRaw] = m;
-      // Skip header-like lines
-      if (/fec|detalle|cupon|fecha/i.test(description)) continue;
+    let m = line.match(fullRe);
+    if (m) {
+      const [, opRaw, procRaw, coupon, desc, fin, iva, amtRaw] = m;
+      if (SKIP.test(desc) || SKIP.test(opRaw)) continue;
+      const amount = parsePYGAmount(amtRaw);
+      if (amount === 0) continue;
       rows.push({
-        opDate: parseDateDDMMYYYY(opDateRaw),
-        processDate: parseDateDDMMYYYY(procDateRaw),
-        coupon: '',
-        description: description.trim(),
-        amount: parsePYGAmount(amtRaw),
-        currency: 'PYG',
+        opDate:      parseDateDDMMYYYY(opRaw),
+        processDate: parseDateDDMMYYYY(procRaw),
+        coupon:      coupon ?? '',
+        description: desc.trim(),
+        amount,
+        currency:    'PYG',
+        isFinanceable: (fin ?? 'N').toUpperCase() === 'S',
+        hasIva:        (iva ?? 'N').toUpperCase() === 'S',
+      });
+      continue;
+    }
+
+    m = line.match(singleRe);
+    if (m) {
+      const [, opRaw, desc, amtRaw] = m;
+      if (SKIP.test(desc) || SKIP.test(opRaw)) continue;
+      const amount = parsePYGAmount(amtRaw);
+      if (amount === 0) continue;
+      rows.push({
+        opDate:      parseDateDDMMYYYY(opRaw),
+        processDate: parseDateDDMMYYYY(opRaw),
+        coupon:      '',
+        description: desc.trim(),
+        amount,
+        currency:    'PYG',
         isFinanceable: false,
-        hasIva: false,
+        hasIva:        false,
       });
     }
   }

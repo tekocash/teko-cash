@@ -7,6 +7,10 @@ import {
 import { toast } from 'react-hot-toast';
 import { parsePdfStatement, pdfFormatLabel } from '@/features/transactions/service/pdf-parser';
 import type { ParsedCardStatement, CardFinancialSummary, ParsedCardTransaction } from '@/features/transactions/service/pdf-parser';
+import {
+  pdfTxsToPreviewRows, importSelected,
+  type PreviewRow, type ImportLookups,
+} from '@/features/transactions/service/bank-importer';
 import { supabase } from '@/lib/supabase/client';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -498,16 +502,28 @@ function CardRow({ card, pendingTxs, onEdit, onDelete }: {
 
 // ── PDF Import Module ──────────────────────────────────────────────────────────
 
+const PREVIEW_PAGE_SIZE = 50;
+
 function PdfImportModule({ cards, onStatementLoaded }: {
   cards: RegisteredCard[];
   onStatementLoaded: (cardId: string, summary: CardFinancialSummary, txs: ParsedCardTransaction[]) => void;
 }) {
+  const { user } = useAuthStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsing, setParsing] = useState(false);
   const [result, setResult] = useState<ParsedCardStatement | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string>('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  // Transaction preview state
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
+  const [previewCats, setPreviewCats] = useState<{ id: string; name: string; type: string }[]>([]);
+  const [previewBudgets, setPreviewBudgets] = useState<{ id: string; name: string }[]>([]);
+  const [previewPage, setPreviewPage] = useState(0);
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'new' | 'dup'>('all');
+  const [importing, setImporting] = useState(false);
+  const [importDone, setImportDone] = useState<{ ok: number; cats: string[] } | null>(null);
 
   const processFile = async (file: File) => {
     if (!file.type.includes('pdf') && !file.name.endsWith('.pdf')) {
@@ -517,14 +533,33 @@ function PdfImportModule({ cards, onStatementLoaded }: {
     setParsing(true);
     setParseError(null);
     setResult(null);
+    setPreviewRows([]);
+    setImportDone(null);
     try {
       const parsed = await parsePdfStatement(file);
       setResult(parsed);
-      // Auto-select card that matches bank
       if (cards.length === 1) setSelectedCardId(cards[0].id);
       else {
-        const match = cards.find(c => c.bank.toLowerCase().includes(parsed.summary.bank.toLowerCase()) || parsed.summary.bank.toLowerCase().includes(c.bank.toLowerCase()));
+        const match = cards.find(c =>
+          c.bank.toLowerCase().includes(parsed.summary.bank.toLowerCase()) ||
+          parsed.summary.bank.toLowerCase().includes(c.bank.toLowerCase())
+        );
         if (match) setSelectedCardId(match.id);
+      }
+      // Convert to preview rows (with duplicate check + auto-categorise)
+      if (parsed.transactions.length > 0 && user?.id) {
+        const rows = await pdfTxsToPreviewRows(parsed.transactions, user.id);
+        setPreviewRows(rows);
+        setPreviewPage(0);
+        setPreviewFilter('all');
+        // Load categories + budgets for dropdowns
+        Promise.all([
+          supabase.from('categories').select('id, name, category_type').eq('user_id', user.id),
+          supabase.from('budgets').select('id, name').eq('user_id', user.id).order('name'),
+        ]).then(([cats, budgets]) => {
+          if (cats.data) setPreviewCats(cats.data.map((c: any) => ({ id: c.id, name: c.name, type: c.category_type })));
+          if (budgets.data) setPreviewBudgets(budgets.data.map((b: any) => ({ id: b.id, name: b.name })));
+        });
       }
     } catch (err: any) {
       setParseError(err.message || 'Error al leer el PDF');
@@ -546,13 +581,71 @@ function PdfImportModule({ cards, onStatementLoaded }: {
     if (file) processFile(file);
   };
 
-  const handleAssign = () => {
+  const handleAssignCard = () => {
     if (!result || !selectedCardId) { toast.error('Seleccioná una tarjeta'); return; }
-    onStatementLoaded(selectedCardId, result.summary, result.transactions);
-    setResult(null);
-    setSelectedCardId('');
-    toast.success('Extracto asignado a la tarjeta');
+    onStatementLoaded(selectedCardId, result.summary, []); // transactions are imported via preview table below
+    toast.success('Resumen del extracto guardado en la tarjeta');
   };
+
+  const updateRowCategory = (previewId: string, catName: string) => {
+    const cat = previewCats.find(c => c.name === catName);
+    setPreviewRows(rows => rows.map(r =>
+      r.previewId === previewId
+        ? { ...r, suggestedCategory: catName || null, suggestedCategoryType: (cat?.type as 'income' | 'expense') ?? 'expense' }
+        : r
+    ));
+  };
+
+  const updateRowBudget = (previewId: string, budgetId: string) => {
+    setPreviewRows(rows => rows.map(r =>
+      r.previewId === previewId ? { ...r, budgetId: budgetId || null } : r
+    ));
+  };
+
+  const toggleRow = (id: string) =>
+    setPreviewRows(rows => rows.map(r => r.previewId === id ? { ...r, selected: !r.selected } : r));
+  const toggleAll = (val: boolean) =>
+    setPreviewRows(rows => rows.map(r => ({ ...r, selected: val })));
+
+  const handleImportTxs = async () => {
+    const selected = previewRows.filter(r => r.selected);
+    if (!selected.length || !user?.id) return;
+    setImporting(true);
+    try {
+      const [cats, pms, currencies] = await Promise.all([
+        supabase.from('categories').select('id, name').eq('user_id', user.id),
+        supabase.from('user_payment_methods').select('id, name').eq('user_id', user.id),
+        supabase.from('currencies').select('id, code'),
+      ]);
+      const lookups: ImportLookups = {
+        catMap:  new Map((cats.data || []).map((c: any) => [c.name.toLowerCase(), c.id])),
+        pmMap:   new Map((pms.data  || []).map((p: any) => [p.name.toLowerCase(), p.id])),
+        curMap:  new Map((currencies.data || []).map((c: any) => [c.code.toLowerCase(), c.id])),
+      };
+      const res = await importSelected(selected, user.id, lookups, 'generic');
+      setImportDone({ ok: res.ok, cats: res.newCategoriesCreated });
+      setPreviewRows([]);
+      if (res.ok > 0) toast.success(`${res.ok} transacciones importadas`);
+      if (res.failed > 0) toast.error(`${res.failed} fallaron`);
+    } catch (err: any) {
+      toast.error(err.message || 'Error al importar');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Derived preview data
+  const filtered = previewFilter === 'new' ? previewRows.filter(r => !r.isDuplicate)
+    : previewFilter === 'dup' ? previewRows.filter(r => r.isDuplicate)
+    : previewRows;
+  const totalPages = Math.ceil(filtered.length / PREVIEW_PAGE_SIZE);
+  const pageRows = filtered.slice(previewPage * PREVIEW_PAGE_SIZE, (previewPage + 1) * PREVIEW_PAGE_SIZE);
+  const selectedCount = previewRows.filter(r => r.selected).length;
+  const dupCount = previewRows.filter(r => r.isDuplicate).length;
+  const newCount = previewRows.length - dupCount;
+  const fmtPrev = (n: number, cur = 'PYG') => cur === 'USD'
+    ? `$${n.toFixed(2)}`
+    : new Intl.NumberFormat('es-PY', { maximumFractionDigits: 0 }).format(n);
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl border border-indigo-200 dark:border-indigo-800 shadow-sm overflow-hidden">
@@ -563,7 +656,7 @@ function PdfImportModule({ cards, onStatementLoaded }: {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-indigo-800 dark:text-indigo-200">Importar extracto PDF</p>
-          <p className="text-xs text-indigo-600 dark:text-indigo-400">Ueno Bank, Itaú, Atlas Bank</p>
+          <p className="text-xs text-indigo-600 dark:text-indigo-400">Ueno Bank · Itaú · Atlas Bank — arrastrá o seleccioná</p>
         </div>
         <button onClick={() => fileRef.current?.click()} disabled={parsing}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
@@ -573,8 +666,8 @@ function PdfImportModule({ cards, onStatementLoaded }: {
         <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={handleFile} />
       </div>
 
-      {/* Drop zone when no result */}
-      {!result && !parsing && (
+      {/* Drop zone */}
+      {!result && !parsing && previewRows.length === 0 && !importDone && (
         <div
           onDrop={handleDrop}
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -590,7 +683,6 @@ function PdfImportModule({ cards, onStatementLoaded }: {
         </div>
       )}
 
-      {/* Error */}
       {parseError && (
         <div className="mx-4 my-3 flex items-center gap-2 text-xs text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2.5">
           <AlertCircle size={14} /> {parseError}
@@ -598,52 +690,30 @@ function PdfImportModule({ cards, onStatementLoaded }: {
         </div>
       )}
 
-      {/* Result */}
+      {/* Summary + card assignment */}
       {result && (
-        <div className="p-4 space-y-4">
-          {/* Detected info */}
-          <div className="flex items-center gap-3 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl">
-            <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
-            <div className="flex-1 min-w-0 text-sm">
-              <p className="font-semibold text-emerald-800 dark:text-emerald-200">{pdfFormatLabel(result.format)}</p>
-              <p className="text-xs text-emerald-600 dark:text-emerald-400">
+        <div className="p-4 space-y-4 border-b border-gray-100 dark:border-gray-700">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 size={18} className="text-emerald-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{pdfFormatLabel(result.format)}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
                 {result.summary.cardHolder && `${result.summary.cardHolder} · `}
-                {result.summary.totalDebt > 0 ? `Deuda total: ${fmt(result.summary.totalDebt, result.summary.currency)}` : 'Extracto leído'}
-                {result.transactions.length > 0 ? ` · ${result.transactions.length} transacciones` : ''}
+                {result.summary.totalDebt > 0 ? `Deuda: ${fmt(result.summary.totalDebt, result.summary.currency)}` : 'Extracto leído'}
+                {result.transactions.length > 0 ? ` · ${result.transactions.length} transacciones detectadas` : ' · sin transacciones detectadas en el PDF'}
               </p>
             </div>
-            <button onClick={() => setResult(null)} className="p-1 text-gray-400 hover:text-gray-600 shrink-0"><X size={14} /></button>
+            <button onClick={() => { setResult(null); setPreviewRows([]); setImportDone(null); }}
+              className="p-1 text-gray-400 hover:text-gray-600 shrink-0"><X size={14} /></button>
           </div>
 
-          {/* Assign to card */}
-          {cards.length > 0 ? (
-            <div className="flex gap-3 items-end">
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Asignar a tarjeta</label>
-                <select value={selectedCardId} onChange={e => setSelectedCardId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-800 dark:text-gray-200 outline-none focus:ring-2 focus:ring-indigo-500">
-                  <option value="">Seleccioná una tarjeta...</option>
-                  {cards.map(c => <option key={c.id} value={c.id}>{c.name} ({c.bank})</option>)}
-                </select>
-              </div>
-              <button onClick={handleAssign} disabled={!selectedCardId}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
-                Guardar en tarjeta
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-xl px-3 py-2.5">
-              <Info size={14} /> Primero registrá una tarjeta para asignarle este extracto
-            </div>
-          )}
-
-          {/* Key numbers preview */}
+          {/* Key numbers */}
           {result.summary.totalDebt > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
                 { label: 'Deuda total', value: fmt(result.summary.totalDebt, result.summary.currency), color: 'text-rose-600 dark:text-rose-400' },
                 { label: 'Pago mínimo', value: fmt(result.summary.minimumPayment, result.summary.currency), color: 'text-indigo-600 dark:text-indigo-400' },
-                { label: 'Gastos financieros', value: fmt(result.summary.totalFinancialCharges, result.summary.currency), color: 'text-amber-600 dark:text-amber-400' },
+                { label: 'Gastos fin.', value: fmt(result.summary.totalFinancialCharges, result.summary.currency), color: 'text-amber-600 dark:text-amber-400' },
                 { label: 'Vencimiento', value: fmtDate(result.summary.dueDate), color: urgencyColor(daysUntil(result.summary.dueDate)) },
               ].map(item => (
                 <div key={item.label} className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-3 text-center">
@@ -652,6 +722,143 @@ function PdfImportModule({ cards, onStatementLoaded }: {
                 </div>
               ))}
             </div>
+          )}
+
+          {/* Assign summary to card */}
+          {cards.length > 0 ? (
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Guardar resumen en tarjeta</label>
+                <select value={selectedCardId} onChange={e => setSelectedCardId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-800 dark:text-gray-200 outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="">Seleccioná una tarjeta...</option>
+                  {cards.map(c => <option key={c.id} value={c.id}>{c.name} ({c.bank})</option>)}
+                </select>
+              </div>
+              <button onClick={handleAssignCard} disabled={!selectedCardId}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
+                Guardar resumen
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-xl px-3 py-2.5">
+              <Info size={14} /> Registrá una tarjeta para guardarle el resumen del extracto
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transaction preview table */}
+      {previewRows.length > 0 && (
+        <div className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Transacciones detectadas
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                {newCount} nuevas · {dupCount} duplicadas
+              </span>
+            </p>
+            <div className="flex gap-1.5">
+              {(['all', 'new', 'dup'] as const).map(f => (
+                <button key={f} onClick={() => { setPreviewFilter(f); setPreviewPage(0); }}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${previewFilter === f ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'}`}>
+                  {f === 'all' ? `Todas (${previewRows.length})` : f === 'new' ? `Nuevas (${newCount})` : `Dup. (${dupCount})`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Bulk actions */}
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => toggleAll(true)} className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200">Seleccionar todas</button>
+            <button onClick={() => setPreviewRows(rows => rows.map(r => ({ ...r, selected: !r.isDuplicate })))} className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-xs text-emerald-700 dark:text-emerald-300">Solo nuevas</button>
+            <button onClick={() => toggleAll(false)} className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200">Deseleccionar</button>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700 max-h-96 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-gray-50 dark:bg-gray-900/60">
+                <tr>
+                  <th className="px-3 py-2 w-8">
+                    <input type="checkbox" checked={previewRows.every(r => r.selected)} onChange={e => toggleAll(e.target.checked)} className="rounded" />
+                  </th>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Fecha</th>
+                  <th className="px-3 py-2 text-right text-gray-500 font-medium">Monto</th>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Descripción</th>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Categoría</th>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Presupuesto</th>
+                  <th className="px-3 py-2 text-center text-gray-500 font-medium">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+                {pageRows.map(row => {
+                  const existsInList = !!previewCats.find(c => c.name.toLowerCase() === (row.suggestedCategory ?? '').toLowerCase());
+                  const isNewCat = !!row.suggestedCategory && !existsInList;
+                  return (
+                    <tr key={row.previewId} onClick={() => toggleRow(row.previewId)}
+                      className={`cursor-pointer transition-colors ${row.selected ? 'bg-white dark:bg-gray-800' : 'bg-gray-50/60 dark:bg-gray-900/20 opacity-60'} hover:bg-indigo-50/20`}>
+                      <td className="px-3 py-2"><input type="checkbox" checked={row.selected} onChange={() => toggleRow(row.previewId)} onClick={e => e.stopPropagation()} className="rounded" /></td>
+                      <td className="px-3 py-2 text-gray-600 dark:text-gray-300 whitespace-nowrap">{row.date}</td>
+                      <td className="px-3 py-2 text-right font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">{fmtPrev(row.amount, row.currency)}</td>
+                      <td className="px-3 py-2 text-gray-600 dark:text-gray-300 max-w-[160px] truncate">{row.description}</td>
+                      <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
+                        <select value={row.suggestedCategory ?? ''}
+                          onChange={e => updateRowCategory(row.previewId, e.target.value)}
+                          className={`w-full text-[11px] px-1.5 py-1 rounded-lg border focus:outline-none focus:ring-1 focus:ring-indigo-500 ${isNewCat ? 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200'}`}>
+                          <option value="">— Sin categoría —</option>
+                          {isNewCat && <option value={row.suggestedCategory!}>✨ Crear: {row.suggestedCategory}</option>}
+                          {previewCats.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
+                        <select value={row.budgetId ?? ''}
+                          onChange={e => updateRowBudget(row.previewId, e.target.value)}
+                          className="w-full text-[11px] px-1.5 py-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                          <option value="">— Sin presupuesto —</option>
+                          {previewBudgets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {row.isDuplicate
+                          ? <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">Dup.</span>
+                          : <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">Nueva</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination + import */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setPreviewPage(p => Math.max(0, p - 1))} disabled={previewPage === 0}
+                className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs disabled:opacity-40">‹ Ant.</button>
+              <span className="text-xs text-gray-400">{previewPage + 1}/{Math.max(1, totalPages)}</span>
+              <button onClick={() => setPreviewPage(p => Math.min(totalPages - 1, p + 1))} disabled={previewPage >= totalPages - 1}
+                className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs disabled:opacity-40">Sig. ›</button>
+            </div>
+            <button onClick={handleImportTxs} disabled={importing || selectedCount === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors">
+              {importing ? <RefreshCw size={13} className="animate-spin" /> : <ArrowDownRight size={13} />}
+              Importar {selectedCount > 0 ? selectedCount : ''} transacciones
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Import result */}
+      {importDone && (
+        <div className="mx-4 mb-4 rounded-xl p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm space-y-1">
+          <div className="flex items-center gap-2 font-medium text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 size={15} /> {importDone.ok} transacciones importadas
+          </div>
+          {importDone.cats.length > 0 && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 pl-5">
+              Categorías creadas: {importDone.cats.map(c => <span key={c} className="inline-block bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-full px-2 py-0.5 mr-1">{c}</span>)}
+            </p>
           )}
         </div>
       )}
