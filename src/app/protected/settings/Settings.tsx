@@ -1153,16 +1153,31 @@ export default function SettingsPage() {
                               </td>
                               <td className="px-3 py-2 text-gray-600 dark:text-gray-300 max-w-[200px] truncate">{row.description}</td>
                               <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
-                                <select
-                                  value={row.suggestedCategory ?? ''}
-                                  onChange={e => updateRowCategory(row.previewId, e.target.value)}
-                                  className="w-full text-[11px] px-1.5 py-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                >
-                                  <option value="">— Sin categoría —</option>
-                                  {previewCategories.map(c => (
-                                    <option key={c.id} value={c.name}>{c.name}</option>
-                                  ))}
-                                </select>
+                                {(() => {
+                                  const existsInList = !!previewCategories.find(
+                                    c => c.name.toLowerCase() === (row.suggestedCategory ?? '').toLowerCase()
+                                  );
+                                  const isNewSuggestion = !!row.suggestedCategory && !existsInList;
+                                  return (
+                                    <select
+                                      value={row.suggestedCategory ?? ''}
+                                      onChange={e => updateRowCategory(row.previewId, e.target.value)}
+                                      className={`w-full text-[11px] px-1.5 py-1 rounded-lg border focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+                                        isNewSuggestion
+                                          ? 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
+                                          : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200'
+                                      }`}
+                                    >
+                                      <option value="">— Sin categoría —</option>
+                                      {isNewSuggestion && (
+                                        <option value={row.suggestedCategory!}>✨ Crear: {row.suggestedCategory}</option>
+                                      )}
+                                      {previewCategories.map(c => (
+                                        <option key={c.id} value={c.name}>{c.name}</option>
+                                      ))}
+                                    </select>
+                                  );
+                                })()}
                               </td>
                               <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
                                 <select
