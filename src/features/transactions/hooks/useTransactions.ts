@@ -43,8 +43,7 @@ export function useTransactions() {
         .eq('user_id', user.id)
         .gte('date', filters.startDate)
         .lte('date', filters.endDate)
-        .order('date', { ascending: false })
-        .limit(100);
+        .order('date', { ascending: false });
 
       if (filters.direction !== 'all') q = q.eq('direction', filters.direction);
       if (filters.search) {

@@ -23,6 +23,7 @@ const BudgetsPage = lazy(() => import('./app/protected/budgets/Budgets'));
 const FamilyPage = lazy(() => import('./app/protected/family/Family'));
 const SettingsPage = lazy(() => import('./app/protected/settings/Settings'));
 const CategoriesPage = lazy(() => import('./features/categories/CategoryManagment'));
+const CreditCardsPage = lazy(() => import('./app/protected/cards/CreditCards'));
 
 function App() {
   return (
@@ -46,6 +47,7 @@ function App() {
             <Route path="/family" element={<FamilyPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
+            <Route path="/cards" element={<CreditCardsPage />} />
           </Route>
         </Routes>
       </Suspense>

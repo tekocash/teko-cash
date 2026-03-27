@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase/client';
 import { createCategory } from '@/features/categories/services/category-service';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export type BankFormat =
   | 'atlas-bank'
@@ -11,19 +11,29 @@ export type BankFormat =
   | 'generic';
 
 export interface ParsedTransaction {
-  date: string;           // yyyy-MM-dd
-  amount: number;         // always positive
+  date: string;
+  amount: number;
   direction: 'income' | 'expense';
   description: string;
   reference: string;
   currency: 'PYG' | 'USD';
-  section?: string;       // itau-cc: 'pagos' | 'exterior' | 'paraguay'
+  section?: string;
+}
+
+/** Row shown in the pre-import preview table */
+export interface PreviewRow extends ParsedTransaction {
+  previewId: string;          // local id for checkbox state
+  isDuplicate: boolean;
+  suggestedCategory: string | null;
+  suggestedCategoryType: 'income' | 'expense' | null;
+  selected: boolean;
+  budgetId?: string | null;   // user-assigned budget override
 }
 
 export interface ImportLookups {
-  catMap: Map<string, string>;   // lowercase name → category_id
-  pmMap: Map<string, string>;    // lowercase name → payment_method_id
-  curMap: Map<string, string>;   // lowercase code  → currency_id
+  catMap: Map<string, string>;
+  pmMap: Map<string, string>;
+  curMap: Map<string, string>;
 }
 
 export interface MonthlyTrend {
@@ -67,28 +77,35 @@ interface CategoryRule {
 const CATEGORY_RULES: CategoryRule[] = [
   // Income
   { keywords: ['pago de haberes', 'salario', 'sueldo', 'haberes', 'remuneracion', 'honorarios', 'pago nomina'], name: 'Salario', type: 'income' },
-  { keywords: ['transferencia recibida', 'credito recibido', 'acreditacion', 'dep. salario'], name: 'Transferencias recibidas', type: 'income' },
-  { keywords: ['deposito en efectivo', 'deposito en cheque'], name: 'Depósitos', type: 'income' },
-  // Streaming
-  { keywords: ['netflix', 'spotify', 'hbo', 'disney', 'youtube premium', 'amazon prime', 'streaming', 'crunchyroll', 'crunchy', 'paramount', 'apple.com/bill'], name: 'Entretenimiento', type: 'expense' },
+  { keywords: ['transferencia recibida', 'credito recibido', 'acreditacion', 'dep. salario', 'transfer.internet banking'], name: 'Transferencias recibidas', type: 'income' },
+  { keywords: ['deposito en efectivo', 'deposito en cheque', 'deposito'], name: 'Depósitos', type: 'income' },
+  { keywords: ['su pago, gracias', 'su pago gracias', 'pago tarjeta'], name: 'Pago de tarjeta', type: 'income' },
+  // Streaming / digital
+  { keywords: ['netflix', 'spotify', 'hbo', 'disney', 'youtube premium', 'youtube', 'amazon prime', 'crunchyroll', 'crunchy', 'paramount', 'apple.com/bill', 'deezer', 'flow+disney', 'internet + flow'], name: 'Entretenimiento digital', type: 'expense' },
   // Transport
-  { keywords: ['uber', 'taxi', 'cabify', 'remise', 'dlocal *bolt', 'bolt'], name: 'Transporte', type: 'expense' },
+  { keywords: ['uber', 'taxi', 'cabify', 'remise', 'dlocal *bolt', 'bolt', 'transporte'], name: 'Transporte', type: 'expense' },
   // Food delivery
-  { keywords: ['pedidosya', 'pedidos ya', 'rappi', 'uber eats', 'delivery'], name: 'Delivery / Comida', type: 'expense' },
+  { keywords: ['pedidosya', 'pedidos ya', 'pedidos_ya', 'rappi', 'uber eats', 'delivery', 'deliverys', 'deliveries'], name: 'Delivery / Comida', type: 'expense' },
   // Restaurants
-  { keywords: ['mcdonald', 'burger king', 'pizza', 'kfc', 'subway', 'sushi', 'restaurant', 'resto ', 'comida', 'mc donald'], name: 'Restaurante / Comida', type: 'expense' },
+  { keywords: ['mcdonald', 'burger king', 'pizza', 'kfc', 'subway', 'sushi', 'restaurant', 'resto ', 'mc ', 'biggie', 'hamburguesa'], name: 'Restaurante / Comida', type: 'expense' },
   // Fuel
   { keywords: ['petrobras', 'copetrol', 'shell', 'esso', 'primax', 'nafta', 'diesel', 'combustible', 'estacion de serv'], name: 'Combustible', type: 'expense' },
-  // Supermarket
-  { keywords: ['stock center', 'superseis', 'gran via', 'supermercado', 'casa rica', 'el dorado', 'hipermaxi', 'disco ', 'shopping'], name: 'Supermercado', type: 'expense' },
-  // Pharmacy / Health
+  // Supermarket / groceries
+  { keywords: ['stock center', 'superseis', 'gran via', 'supermercado', 'casa rica', 'el dorado', 'hipermaxi', 'shopping', 'compras casa', 'compras mello', 'compras compartidas'], name: 'Supermercado / Compras', type: 'expense' },
+  // Pharmacy
   { keywords: ['farmacia', 'farmatodo', 'estrella', 'parana farma', 'disafarma', 'botica', 'farmacenter'], name: 'Farmacia', type: 'expense' },
   // Medical
   { keywords: ['hospital', 'clinica', 'medico', 'laboratorio', 'analisis', 'consulta medica', 'sanatorio', 'doctor'], name: 'Salud', type: 'expense' },
   // Loans / installments
-  { keywords: ['prestamo', 'cuota', 'financiamiento', 'cobro automatico de prestamo', 'interes', 'mora', 'pagare', 'provision ley'], name: 'Préstamos / Cuotas', type: 'expense' },
+  { keywords: ['prestamo', 'cuota', 'financiamiento', 'cobro automatico de prestamo', 'cobro de tarjetas de credito', 'interes', 'mora', 'pagare', 'provision ley'], name: 'Préstamos / Cuotas', type: 'expense' },
+  // Rent
+  { keywords: ['alquiler', 'arriendo', 'renta'], name: 'Alquiler', type: 'expense' },
   // Basic services
-  { keywords: ['ande ', 'essap', 'copaco', 'claro ', 'tigo ', 'personal ', 'telefonia', 'internet', 'prosegur', 'alquiler'], name: 'Servicios básicos', type: 'expense' },
+  { keywords: ['ande ', 'essap', 'copaco', 'claro ', 'tigo ', 'personal ', 'telefonia', 'internet', 'prosegur', 'expensas'], name: 'Servicios básicos', type: 'expense' },
+  // Cleaning / home
+  { keywords: ['limpieza', 'detergente', 'cif', 'papel higienico', 'servilleta', 'bolsa basura', 'escoba', 'ayudin', 'suavizante'], name: 'Hogar / Limpieza', type: 'expense' },
+  // Pet
+  { keywords: ['purina', 'arena gatos', 'arena cat', 'gatitos', 'veterinaria', 'petshop', 'mascotas'], name: 'Mascotas', type: 'expense' },
   // Education
   { keywords: ['colegio', 'universidad', 'escuela', 'matricula', 'colegiatura', 'capacitacion', 'codas thompson', 'inst.codas'], name: 'Educación', type: 'expense' },
   // Insurance
@@ -96,11 +113,11 @@ const CATEGORY_RULES: CategoryRule[] = [
   // ATM
   { keywords: ['cajero', 'atm', 'extraccion', 'retiro efectivo', 'withdrawal'], name: 'Retiro de efectivo', type: 'expense' },
   // Taxes
-  { keywords: ['set ', 'municipalidad', 'impuesto', 'patente', 'inmueble', 'iva ley', 'tributo'], name: 'Impuestos', type: 'expense' },
+  { keywords: ['set ', 'municipalidad', 'impuesto', 'patente', 'inmueble', 'iva ley', 'tributo', 'iva ley 6380'], name: 'Impuestos / IVA', type: 'expense' },
   // Entertainment
-  { keywords: ['cine', 'teatro', 'evento', 'ticket', 'entrada', 'cinemark', 'entretenimiento'], name: 'Entretenimiento', type: 'expense' },
+  { keywords: ['cine', 'teatro', 'evento', 'ticket', 'entrada', 'cinemark'], name: 'Entretenimiento', type: 'expense' },
   // Transfers out
-  { keywords: ['transferencia enviada', 'transferencias entre cuentas', 'cobro de tarjetas'], name: 'Transferencias enviadas', type: 'expense' },
+  { keywords: ['transferencia enviada', 'transferencias entre cuentas', 'transferencia enviada cta'], name: 'Transferencias enviadas', type: 'expense' },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -113,7 +130,7 @@ function normalize(s: string): string {
     .trim();
 }
 
-function autoCategorize(description: string): CategoryRule | null {
+export function autoCategorize(description: string): CategoryRule | null {
   const n = normalize(description);
   for (const rule of CATEGORY_RULES) {
     for (const kw of rule.keywords) {
@@ -145,9 +162,14 @@ function parseUSDAmount(raw: unknown): number {
   return parseFloat(String(raw).replace(/\./g, '').replace(',', '.')) || 0;
 }
 
-function fingerprint(tx: ParsedTransaction): string {
-  return `${tx.date}_${Math.round(tx.amount)}_${tx.direction}_${tx.currency}`;
+/** Fingerprint includes date+amount+direction+currency+first 30 chars of description */
+function fingerprint(tx: { date: string; amount: number; direction: string; currency: string; description: string }): string {
+  const desc = normalize(tx.description).slice(0, 30);
+  return `${tx.date}_${Math.round(tx.amount)}_${tx.direction}_${tx.currency}_${desc}`;
 }
+
+let _previewCounter = 0;
+function newPreviewId() { return `prev_${++_previewCounter}`; }
 
 // ── Format detection ──────────────────────────────────────────────────────────
 
@@ -163,20 +185,14 @@ export function detectFormat(workbook: XLSX.WorkBook, rawBuffer: ArrayBuffer): B
   }
   const h = headers.join(' ');
 
-  // Atlas Bank: has "debito" AND "credito" AND "remitente"
-  if (h.includes('debito') && h.includes('credito') && h.includes('remitente')) {
-    return 'atlas-bank';
-  }
+  if (h.includes('debito') && h.includes('credito') && h.includes('remitente')) return 'atlas-bank';
+  if (h.includes('debitos') && h.includes('creditos') && h.includes('saldo')) return 'itau-savings-usd';
 
-  // Itaú USD savings: has "debitos" AND "creditos" AND "saldo"
-  if (h.includes('debitos') && h.includes('creditos') && h.includes('saldo')) {
-    return 'itau-savings-usd';
-  }
-
-  // Itaú CC: check raw bytes for HTML signature
+  // Itaú CC: detect HTML signature in raw bytes
   try {
-    const sample = new TextDecoder('iso-8859-1').decode(rawBuffer.slice(0, 500));
-    if (sample.toLowerCase().includes('<html') || sample.toLowerCase().includes('cupon') || sample.toLowerCase().includes('fec. operacion')) {
+    const sample = new TextDecoder('iso-8859-1').decode(rawBuffer.slice(0, 1000));
+    const sn = sample.toLowerCase();
+    if (sn.includes('<html') || sn.includes('cupon') || sn.includes('fec. operaci') || sn.includes('n\u00ba cup')) {
       return 'itau-credit-card';
     }
   } catch {}
@@ -201,7 +217,6 @@ function parseAtlasBank(ws: XLSX.WorkSheet): ParsedTransaction[] {
   const result: ParsedTransaction[] = [];
 
   for (const row of rows) {
-    // Find columns case-insensitively
     const getCol = (...keys: string[]) => {
       for (const k of keys) {
         const found = Object.keys(row).find(rk => normalize(rk) === normalize(k));
@@ -236,7 +251,6 @@ function parseAtlasBank(ws: XLSX.WorkSheet): ParsedTransaction[] {
       result.push({ date, amount: creditoAmt, direction: 'income', description: descripcion, reference: documento, currency: 'PYG' });
     }
   }
-
   return result;
 }
 
@@ -249,35 +263,40 @@ function parseItauCreditCard(rawBuffer: ArrayBuffer): ParsedTransaction[] {
     const tables = Array.from(doc.querySelectorAll('table'));
 
     for (const table of tables) {
-      // Detect section from preceding heading
+      // Detect section from preceding sibling headings
       let section = 'paraguay';
       let prev = table.previousElementSibling;
       while (prev) {
-        const text = prev.textContent?.toLowerCase() || '';
+        const text = normalize(prev.textContent || '');
         if (text.includes('exterior')) { section = 'exterior'; break; }
         if (text.includes('pago')) { section = 'pagos'; break; }
         prev = prev.previousElementSibling;
       }
 
       const rows = Array.from(table.querySelectorAll('tr'));
-      let headerSkipped = false;
+      let headerFound = false;
 
       for (const tr of rows) {
-        const cells = Array.from(tr.querySelectorAll('td, th'));
+        const isHeader = tr.querySelector('th') !== null;
+        if (isHeader) { headerFound = true; continue; }
+        if (!headerFound) continue;
+
+        const cells = Array.from(tr.querySelectorAll('td'));
         if (cells.length < 4) continue;
-        if (!headerSkipped || tr.querySelector('th')) { headerSkipped = true; continue; }
 
         const fechaText = cells[0]?.textContent?.trim() || '';
         const detalle = cells[3]?.textContent?.trim() || '';
-        const montoText = cells[4]?.textContent?.trim() || cells[cells.length - 1]?.textContent?.trim() || '';
+        const montoText = (cells[4] ?? cells[cells.length - 1])?.textContent?.trim() || '';
+        const cupon = cells[2]?.textContent?.trim() || '';
 
         const date = parseDDMMYYYY(fechaText);
         if (!date || !detalle || detalle.length < 2) continue;
 
-        // Parse monto: period = thousands sep, may have parentheses for credits
-        const cleanMonto = montoText.replace(/\./g, '');
+        // Parse monto: period = thousands separator, parentheses or minus = credit
+        const cleanMonto = montoText.replace(/\./g, '').trim();
         let amount = 0;
         let direction: 'income' | 'expense' = 'expense';
+
         if (cleanMonto.startsWith('(') && cleanMonto.endsWith(')')) {
           amount = Math.abs(parseInt(cleanMonto.slice(1, -1), 10) || 0);
           direction = 'income';
@@ -290,41 +309,37 @@ function parseItauCreditCard(rawBuffer: ArrayBuffer): ParsedTransaction[] {
         }
 
         if (amount === 0) continue;
-        const cupon = cells[2]?.textContent?.trim() || '';
         result.push({ date, amount, direction, description: detalle, reference: cupon, currency: 'PYG', section });
       }
     }
-  } catch (e) {
-    // Fallback: use XLSX to parse the tables
-    const wb = XLSX.read(rawBuffer, { type: 'array' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    for (const row of rows) {
-      const vals = Object.values(row).map(v => String(v).trim());
-      if (vals.length < 4) continue;
-      const date = parseDDMMYYYY(vals[0]);
-      if (!date) continue;
-      const monto = parseInt(vals[vals.length - 1].replace(/\D/g, ''), 10) || 0;
-      if (monto === 0) continue;
-      result.push({ date, amount: monto, direction: 'expense', description: vals[3] || '', reference: vals[2] || '', currency: 'PYG' });
-    }
+  } catch {
+    // Fallback: read with XLSX (loses section info)
+    try {
+      const wb = XLSX.read(rawBuffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      for (const row of rows) {
+        const vals = Object.values(row).map(v => String(v).trim());
+        if (vals.length < 4) continue;
+        const date = parseDDMMYYYY(vals[0]);
+        if (!date) continue;
+        const monto = parseInt(vals[vals.length - 1].replace(/\D/g, ''), 10) || 0;
+        if (monto === 0) continue;
+        result.push({ date, amount: monto, direction: 'expense', description: vals[3] || '', reference: vals[2] || '', currency: 'PYG' });
+      }
+    } catch {}
   }
-
   return result;
 }
 
 function parseItauSavingsUSD(ws: XLSX.WorkSheet): ParsedTransaction[] {
   const result: ParsedTransaction[] = [];
-  // Sheet has 5 metadata rows; find actual header row
   const allRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
   let headerIdx = -1;
   for (let i = 0; i < Math.min(allRows.length, 10); i++) {
     const row = allRows[i].map(v => normalize(String(v)));
-    if (row.some(v => v === 'fecha' || v === 'descripcion')) {
-      headerIdx = i;
-      break;
-    }
+    if (row.some(v => v === 'fecha' || v === 'descripcion')) { headerIdx = i; break; }
   }
   if (headerIdx < 0) return result;
 
@@ -343,13 +358,9 @@ function parseItauSavingsUSD(ws: XLSX.WorkSheet): ParsedTransaction[] {
     if (!rawDate || !desc) continue;
 
     let date: string | null;
-    if (rawDate instanceof Date) {
-      date = rawDate.toLocaleDateString('en-CA');
-    } else if (typeof rawDate === 'number') {
-      date = excelSerialToDate(rawDate);
-    } else {
-      date = parseDDMMYYYY(String(rawDate));
-    }
+    if (rawDate instanceof Date) date = rawDate.toLocaleDateString('en-CA');
+    else if (typeof rawDate === 'number') date = excelSerialToDate(rawDate);
+    else date = parseDDMMYYYY(String(rawDate));
     if (!date) continue;
 
     const deb = debCol >= 0 ? parseUSDAmount(row[debCol]) : 0;
@@ -359,16 +370,45 @@ function parseItauSavingsUSD(ws: XLSX.WorkSheet): ParsedTransaction[] {
     if (deb > 0) result.push({ date, amount: deb, direction: 'expense', description: desc, reference: ref, currency: 'USD' });
     if (cred > 0) result.push({ date, amount: cred, direction: 'income', description: desc, reference: ref, currency: 'USD' });
   }
-
   return result;
 }
 
-// ── Deduplication ─────────────────────────────────────────────────────────────
+function parseGeneric(ws: XLSX.WorkSheet): ParsedTransaction[] {
+  const result: ParsedTransaction[] = [];
+  const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  for (const row of rows) {
+    const entries = Object.entries(row);
+    const amtEntry = entries.find(([k]) => /monto|amount|importe|debito|credito/i.test(k));
+    const dateEntry = entries.find(([k]) => /fecha|date|dia/i.test(k));
+    const descEntry = entries.find(([k]) => /descripcion|detalle|concepto|description/i.test(k));
+    if (!amtEntry || !dateEntry) continue;
+    const rawDate = dateEntry[1];
+    let date: string | null;
+    if (rawDate instanceof Date) date = rawDate.toLocaleDateString('en-CA');
+    else date = parseDDMMYYYY(String(rawDate));
+    if (!date) continue;
+    const amount = parsePYGAmount(amtEntry[1]);
+    if (amount === 0) continue;
+    result.push({ date, amount, direction: 'expense', description: String(descEntry?.[1] || ''), reference: '', currency: 'PYG' });
+  }
+  return result;
+}
+
+// ── Parse file into raw transactions ─────────────────────────────────────────
+
+function parseFile(wb: XLSX.WorkBook, buffer: ArrayBuffer, format: BankFormat): ParsedTransaction[] {
+  if (format === 'atlas-bank') return parseAtlasBank(wb.Sheets[wb.SheetNames[0]]);
+  if (format === 'itau-credit-card') return parseItauCreditCard(buffer);
+  if (format === 'itau-savings-usd') return parseItauSavingsUSD(wb.Sheets[wb.SheetNames[0]]);
+  return parseGeneric(wb.Sheets[wb.SheetNames[0]]);
+}
+
+// ── Deduplication (DB check) ─────────────────────────────────────────────────
 
 async function buildFingerprintSet(userId: string, dateFrom: string, dateTo: string): Promise<Set<string>> {
   const { data } = await supabase
     .from('transactions')
-    .select('date, amount, direction, currency:currency_id(code)')
+    .select('date, amount, direction, concepto, currency:currency_id(code)')
     .eq('user_id', userId)
     .gte('date', dateFrom)
     .lte('date', dateTo);
@@ -376,266 +416,86 @@ async function buildFingerprintSet(userId: string, dateFrom: string, dateTo: str
   const set = new Set<string>();
   for (const row of data || []) {
     const cur = (row as any).currency?.code || 'PYG';
-    const fp = `${row.date}_${Math.round(row.amount)}_${row.direction}_${cur}`;
+    const fp = fingerprint({
+      date: row.date,
+      amount: row.amount,
+      direction: row.direction,
+      currency: cur,
+      description: row.concepto || '',
+    });
     set.add(fp);
   }
   return set;
 }
 
-// ── Category/PM auto-create ───────────────────────────────────────────────────
+// ── STEP 1: Parse + preview (NO DB insert) ────────────────────────────────────
 
-async function resolveOrCreateCategory(
-  ruleName: string,
-  ruleType: 'income' | 'expense',
-  userId: string,
-  catMap: Map<string, string>,
-  created: string[]
-): Promise<string | null> {
-  const key = ruleName.toLowerCase();
-  if (catMap.has(key)) return catMap.get(key)!;
-
-  const { data } = await createCategory({
-    name: ruleName,
-    category_type: ruleType,
-    user_id: userId,
-    family_group_id: null,
-    parent_id: null,
-  });
-  if (data?.id) {
-    catMap.set(key, data.id);
-    if (!created.includes(ruleName)) created.push(ruleName);
-    return data.id;
-  }
-  return null;
-}
-
-async function resolveOrCreatePaymentMethod(
-  bankName: string,
-  userId: string,
-  pmMap: Map<string, string>,
-  created: string[]
-): Promise<string | null> {
-  const key = bankName.toLowerCase();
-  if (pmMap.has(key)) return pmMap.get(key)!;
-
-  const { error, data } = await supabase
-    .from('user_payment_methods')
-    .insert({ user_id: userId, name: bankName, details: 'transfer' })
-    .select('id')
-    .single();
-  if (!error && data?.id) {
-    pmMap.set(key, data.id);
-    if (!created.includes(bankName)) created.push(bankName);
-    return data.id;
-  }
-  return null;
-}
-
-// ── Budget matching ───────────────────────────────────────────────────────────
-
-async function fetchBudgetCategoryMap(userId: string): Promise<Map<string, string>> {
-  const { data } = await supabase
-    .from('budgets')
-    .select('id, start_date, end_date')
-    .eq('user_id', userId);
-
-  const map = new Map<string, string>();
-  // Simple strategy: if a budget name matches a category name, link them
-  // Full budget_categories junction not used — match by name similarity
-  for (const b of data || []) {
-    map.set(b.id, b.id); // placeholder; enriched below by name
-  }
-  return map;
-}
-
-// ── Financial analysis ────────────────────────────────────────────────────────
-
-function computeAnalysis(
-  parsed: ParsedTransaction[],
-  categoryAssignments: Map<string, string>
-): ImportAnalysis {
-  if (parsed.length === 0) {
-    return {
-      totalIncome: 0, totalExpenses: 0, netBalance: 0, transactionCount: 0,
-      dateRange: { from: '', to: '' },
-      topCategories: [], recurringExpenses: [], detectedDebts: [],
-      foreignExpenses: [], monthlyTrend: [],
-    };
-  }
-
-  let totalIncome = 0;
-  let totalExpenses = 0;
-  const catTotals = new Map<string, { total: number; count: number }>();
-  const monthMap = new Map<string, { incomes: number; expenses: number }>();
-  const descMap = new Map<string, { total: number; count: number; months: Set<string> }>();
-  const debts: ParsedTransaction[] = [];
-  const foreign: ParsedTransaction[] = [];
-  const dates: string[] = [];
-
-  for (const tx of parsed) {
-    dates.push(tx.date);
-    if (tx.direction === 'income') totalIncome += tx.amount;
-    else totalExpenses += tx.amount;
-
-    // Monthly trend
-    const month = tx.date.slice(0, 7);
-    if (!monthMap.has(month)) monthMap.set(month, { incomes: 0, expenses: 0 });
-    const m = monthMap.get(month)!;
-    if (tx.direction === 'income') m.incomes += tx.amount;
-    else m.expenses += tx.amount;
-
-    // Category totals
-    const cat = categoryAssignments.get(tx.description) || 'Sin categoría';
-    if (tx.direction === 'expense') {
-      if (!catTotals.has(cat)) catTotals.set(cat, { total: 0, count: 0 });
-      const c = catTotals.get(cat)!;
-      c.total += tx.amount;
-      c.count++;
-    }
-
-    // Recurring detection
-    const normDesc = normalize(tx.description).slice(0, 40);
-    if (!descMap.has(normDesc)) descMap.set(normDesc, { total: 0, count: 0, months: new Set() });
-    const d = descMap.get(normDesc)!;
-    d.total += tx.amount;
-    d.count++;
-    d.months.add(month);
-
-    // Debt detection
-    const rule = autoCategorize(tx.description);
-    if (rule?.name === 'Préstamos / Cuotas') debts.push(tx);
-
-    // Foreign
-    if (tx.currency === 'USD' || tx.section === 'exterior') foreign.push(tx);
-  }
-
-  dates.sort();
-
-  const topCategories = [...catTotals.entries()]
-    .map(([name, v]) => ({ name, total: v.total, count: v.count }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 6);
-
-  const recurringExpenses = [...descMap.entries()]
-    .filter(([, v]) => v.count >= 2 && v.months.size >= 2)
-    .map(([description, v]) => ({
-      description,
-      occurrences: v.count,
-      totalAmount: v.total,
-      avgAmount: Math.round(v.total / v.count),
-    }))
-    .sort((a, b) => b.occurrences - a.occurrences)
-    .slice(0, 8);
-
-  const monthlyTrend = [...monthMap.entries()]
-    .map(([month, v]) => ({ month, incomes: v.incomes, expenses: v.expenses }))
-    .sort((a, b) => a.month.localeCompare(b.month));
-
-  return {
-    totalIncome,
-    totalExpenses,
-    netBalance: totalIncome - totalExpenses,
-    transactionCount: parsed.length,
-    dateRange: { from: dates[0] || '', to: dates[dates.length - 1] || '' },
-    topCategories,
-    recurringExpenses,
-    detectedDebts: debts.map(d => ({ description: d.description, amount: d.amount })).slice(0, 10),
-    foreignExpenses: foreign.map(f => ({ description: f.description, amount: f.amount, currency: f.currency })).slice(0, 10),
-    monthlyTrend,
-  };
-}
-
-// ── Batch insert ──────────────────────────────────────────────────────────────
-
-async function insertBatch(
-  rows: object[],
-  onProgress?: (pct: number, msg: string) => void,
-  progressBase = 60,
-  progressRange = 25
-): Promise<{ ok: number; failed: number; errors: string[] }> {
-  let ok = 0; let failed = 0; const errors: string[] = [];
-  const total = Math.ceil(rows.length / 50);
-  for (let i = 0; i < rows.length; i += 50) {
-    const batch = rows.slice(i, i + 50);
-    const { error } = await supabase.from('transactions').insert(batch);
-    if (error) {
-      failed += batch.length;
-      errors.push(`Lote ${Math.floor(i / 50) + 1}: ${error.message}`);
-    } else {
-      ok += batch.length;
-    }
-    const batchIdx = Math.floor(i / 50) + 1;
-    onProgress?.(progressBase + Math.round((batchIdx / total) * progressRange), `Insertando lote ${batchIdx}/${total}...`);
-  }
-  return { ok, failed, errors };
-}
-
-// ── Main orchestrator ─────────────────────────────────────────────────────────
-
-export async function importBankStatement(
+export async function parseForPreview(
   file: File,
   userId: string,
+  onProgress?: (pct: number, msg: string) => void
+): Promise<{ format: BankFormat; rows: PreviewRow[] }> {
+  onProgress?.(5, 'Leyendo archivo...');
+  const buffer = await file.arrayBuffer();
+
+  onProgress?.(15, 'Detectando formato...');
+  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+  const format = detectFormat(wb, buffer);
+  onProgress?.(20, `Formato: ${formatLabel(format)}`);
+
+  const parsed = parseFile(wb, buffer, format);
+  onProgress?.(45, `${parsed.length} transacciones encontradas`);
+
+  if (parsed.length === 0) {
+    return { format, rows: [] };
+  }
+
+  // Check DB for duplicates
+  onProgress?.(55, 'Verificando duplicados en base de datos...');
+  const dates = parsed.map(p => p.date).sort();
+  const dbFingerprints = await buildFingerprintSet(userId, dates[0], dates[dates.length - 1]);
+
+  // Build preview rows (also track within-file duplicates)
+  const withinFileSet = new Set<string>();
+  const rows: PreviewRow[] = parsed.map(tx => {
+    const fp = fingerprint(tx);
+    const isDbDup = dbFingerprints.has(fp);
+    const isFileDup = withinFileSet.has(fp);
+    const isDuplicate = isDbDup || isFileDup;
+    if (!isDuplicate) withinFileSet.add(fp);
+
+    const rule = autoCategorize(tx.description);
+    return {
+      ...tx,
+      previewId: newPreviewId(),
+      isDuplicate,
+      suggestedCategory: rule?.name ?? null,
+      suggestedCategoryType: rule?.type ?? null,
+      selected: !isDuplicate,  // duplicates pre-deselected
+    };
+  });
+
+  onProgress?.(100, 'Listo para revisar');
+  return { format, rows };
+}
+
+// ── STEP 2: Import selected rows ──────────────────────────────────────────────
+
+export async function importSelected(
+  rows: PreviewRow[],
+  userId: string,
   lookups: ImportLookups,
+  format: BankFormat,
   onProgress?: (pct: number, msg: string) => void
 ): Promise<ImportResult> {
   const { catMap, pmMap, curMap } = lookups;
   const newCats: string[] = [];
   const newPMs: string[] = [];
-  const categoryAssignments = new Map<string, string>(); // description → category name
+  const categoryAssignments = new Map<string, string>();
 
-  // Step 1: Read file
-  onProgress?.(5, 'Leyendo archivo...');
-  const buffer = await file.arrayBuffer();
+  onProgress?.(5, 'Preparando importación...');
 
-  // Step 2: Detect + parse
-  onProgress?.(10, 'Detectando formato...');
-  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
-  const format = detectFormat(wb, buffer);
-  onProgress?.(15, `Formato detectado: ${formatLabel(format)}`);
-
-  let parsed: ParsedTransaction[] = [];
-  if (format === 'atlas-bank') {
-    parsed = parseAtlasBank(wb.Sheets[wb.SheetNames[0]]);
-  } else if (format === 'itau-credit-card') {
-    parsed = parseItauCreditCard(buffer);
-  } else if (format === 'itau-savings-usd') {
-    parsed = parseItauSavingsUSD(wb.Sheets[wb.SheetNames[0]]);
-  } else {
-    // Generic: use first sheet, try flexible columns
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    for (const row of rows) {
-      const vals = Object.entries(row);
-      const amtEntry = vals.find(([k]) => /monto|amount|importe|debito|credito/i.test(k));
-      const dateEntry = vals.find(([k]) => /fecha|date|dia/i.test(k));
-      const descEntry = vals.find(([k]) => /descripcion|detalle|concepto|description/i.test(k));
-      if (!amtEntry || !dateEntry) continue;
-      const rawDate = dateEntry[1];
-      let date: string | null;
-      if (rawDate instanceof Date) date = rawDate.toLocaleDateString('en-CA');
-      else date = parseDDMMYYYY(String(rawDate));
-      if (!date) continue;
-      const amount = parsePYGAmount(amtEntry[1]);
-      if (amount === 0) continue;
-      parsed.push({ date, amount, direction: 'expense', description: String(descEntry?.[1] || ''), reference: '', currency: 'PYG' });
-    }
-  }
-
-  onProgress?.(25, `${parsed.length} transacciones encontradas`);
-  if (parsed.length === 0) {
-    return { ok: 0, duplicatesSkipped: 0, failed: 0, errors: ['No se encontraron transacciones en el archivo.'], newCategoriesCreated: [], newPaymentMethodsCreated: [], format, analysis: computeAnalysis([], new Map()) };
-  }
-
-  // Step 3: Date range for deduplication
-  const dates = parsed.map(p => p.date).sort();
-  const dateFrom = dates[0];
-  const dateTo = dates[dates.length - 1];
-
-  // Step 4: Load existing fingerprints
-  onProgress?.(30, 'Verificando duplicados...');
-  const fingerprints = await buildFingerprintSet(userId, dateFrom, dateTo);
-
-  // Step 5: Determine payment method name for this source
+  // Auto-create payment method for this bank
   const pmName = format === 'atlas-bank' ? 'Atlas Bank'
     : format === 'itau-credit-card' ? 'Itaú Tarjeta de Crédito'
     : format === 'itau-savings-usd' ? 'Itaú Ahorro USD'
@@ -646,25 +506,21 @@ export async function importBankStatement(
     pmId = await resolveOrCreatePaymentMethod(pmName, userId, pmMap, newPMs);
   }
 
-  // Step 6: Enrich rows
-  onProgress?.(40, 'Categorizando transacciones...');
   const defaultCurId = curMap.get('pyg') ?? null;
   const usdCurId = curMap.get('usd') ?? null;
 
-  let duplicatesSkipped = 0;
+  onProgress?.(15, 'Creando categorías...');
   const toInsert: object[] = [];
 
-  for (const tx of parsed) {
-    const fp = fingerprint(tx);
-    if (fingerprints.has(fp)) { duplicatesSkipped++; continue; }
-    fingerprints.add(fp);
-
-    // Categorize
-    const rule = autoCategorize(tx.description);
+  for (let i = 0; i < rows.length; i++) {
+    const tx = rows[i];
     let categoryId: string | null = null;
-    if (rule) {
-      categoryId = await resolveOrCreateCategory(rule.name, rule.type, userId, catMap, newCats);
-      categoryAssignments.set(tx.description, rule.name);
+
+    if (tx.suggestedCategory && tx.suggestedCategoryType) {
+      categoryId = await resolveOrCreateCategory(
+        tx.suggestedCategory, tx.suggestedCategoryType, userId, catMap, newCats
+      );
+      categoryAssignments.set(tx.description, tx.suggestedCategory);
     }
 
     const currencyId = tx.currency === 'USD' ? usdCurId : defaultCurId;
@@ -677,22 +533,148 @@ export async function importBankStatement(
       category_id: categoryId,
       payment_method_id: pmId,
       currency_id: currencyId,
+      budget_id: tx.budgetId ?? null,
       concepto: tx.description || null,
       nro_operacion: tx.reference || null,
       additional_info: tx.section ? `sección: ${tx.section}` : null,
     });
+
+    if (i % 50 === 0) onProgress?.(15 + Math.round((i / rows.length) * 40), `Preparando fila ${i + 1}/${rows.length}...`);
   }
 
-  onProgress?.(60, `${toInsert.length} nuevas, ${duplicatesSkipped} duplicadas omitidas`);
+  onProgress?.(55, 'Insertando transacciones...');
+  const { ok, failed, errors } = await insertBatch(toInsert, onProgress, 55, 35);
 
-  // Step 7: Insert
-  const { ok, failed, errors } = await insertBatch(toInsert, onProgress);
-
-  // Step 8: Analysis
-  onProgress?.(88, 'Generando análisis...');
-  const analysis = computeAnalysis(parsed, categoryAssignments);
+  onProgress?.(92, 'Generando análisis...');
+  const analysis = computeAnalysis(rows, categoryAssignments);
 
   onProgress?.(100, '¡Importación completada!');
+  return { ok, duplicatesSkipped: 0, failed, errors, newCategoriesCreated: newCats, newPaymentMethodsCreated: newPMs, format, analysis };
+}
 
-  return { ok, duplicatesSkipped, failed, errors, newCategoriesCreated: newCats, newPaymentMethodsCreated: newPMs, format, analysis };
+// ── Category/PM resolution ────────────────────────────────────────────────────
+
+async function resolveOrCreateCategory(
+  name: string,
+  type: 'income' | 'expense',
+  userId: string,
+  catMap: Map<string, string>,
+  created: string[]
+): Promise<string | null> {
+  const key = name.toLowerCase();
+  if (catMap.has(key)) return catMap.get(key)!;
+  const { data } = await createCategory({ name, category_type: type, user_id: userId, family_group_id: null, parent_id: null });
+  if (data?.id) { catMap.set(key, data.id); if (!created.includes(name)) created.push(name); return data.id; }
+  return null;
+}
+
+async function resolveOrCreatePaymentMethod(
+  bankName: string,
+  userId: string,
+  pmMap: Map<string, string>,
+  created: string[]
+): Promise<string | null> {
+  const key = bankName.toLowerCase();
+  if (pmMap.has(key)) return pmMap.get(key)!;
+  const { data, error } = await supabase
+    .from('user_payment_methods')
+    .insert({ user_id: userId, name: bankName, details: 'transfer' })
+    .select('id')
+    .single();
+  if (!error && data?.id) { pmMap.set(key, data.id); if (!created.includes(bankName)) created.push(bankName); return data.id; }
+  return null;
+}
+
+// ── Batch insert ──────────────────────────────────────────────────────────────
+
+async function insertBatch(
+  rows: object[],
+  onProgress?: (pct: number, msg: string) => void,
+  progressBase = 55,
+  progressRange = 35
+): Promise<{ ok: number; failed: number; errors: string[] }> {
+  let ok = 0; let failed = 0; const errors: string[] = [];
+  const total = Math.ceil(rows.length / 50);
+  for (let i = 0; i < rows.length; i += 50) {
+    const batch = rows.slice(i, i + 50);
+    const { error } = await supabase.from('transactions').insert(batch);
+    const batchIdx = Math.floor(i / 50) + 1;
+    if (error) { failed += batch.length; errors.push(`Lote ${batchIdx}: ${error.message}`); }
+    else ok += batch.length;
+    onProgress?.(progressBase + Math.round((batchIdx / total) * progressRange), `Insertando lote ${batchIdx}/${total}...`);
+  }
+  return { ok, failed, errors };
+}
+
+// ── Financial analysis ────────────────────────────────────────────────────────
+
+function computeAnalysis(
+  rows: (ParsedTransaction | PreviewRow)[],
+  categoryAssignments: Map<string, string>
+): ImportAnalysis {
+  if (rows.length === 0) return {
+    totalIncome: 0, totalExpenses: 0, netBalance: 0, transactionCount: 0,
+    dateRange: { from: '', to: '' }, topCategories: [], recurringExpenses: [],
+    detectedDebts: [], foreignExpenses: [], monthlyTrend: [],
+  };
+
+  let totalIncome = 0;
+  let totalExpenses = 0;
+  const catTotals = new Map<string, { total: number; count: number }>();
+  const monthMap = new Map<string, { incomes: number; expenses: number }>();
+  const descMap = new Map<string, { total: number; count: number; months: Set<string> }>();
+  const debts: ParsedTransaction[] = [];
+  const foreign: ParsedTransaction[] = [];
+  const dates: string[] = [];
+
+  for (const tx of rows) {
+    dates.push(tx.date);
+    if (tx.direction === 'income') totalIncome += tx.amount;
+    else totalExpenses += tx.amount;
+
+    const month = tx.date.slice(0, 7);
+    if (!monthMap.has(month)) monthMap.set(month, { incomes: 0, expenses: 0 });
+    const m = monthMap.get(month)!;
+    if (tx.direction === 'income') m.incomes += tx.amount;
+    else m.expenses += tx.amount;
+
+    const cat = categoryAssignments.get(tx.description) ?? autoCategorize(tx.description)?.name ?? 'Sin categoría';
+    if (tx.direction === 'expense') {
+      if (!catTotals.has(cat)) catTotals.set(cat, { total: 0, count: 0 });
+      const c = catTotals.get(cat)!;
+      c.total += tx.amount; c.count++;
+    }
+
+    const normDesc = normalize(tx.description).slice(0, 40);
+    if (!descMap.has(normDesc)) descMap.set(normDesc, { total: 0, count: 0, months: new Set() });
+    const d = descMap.get(normDesc)!;
+    d.total += tx.amount; d.count++; d.months.add(month);
+
+    if (autoCategorize(tx.description)?.name === 'Préstamos / Cuotas') debts.push(tx as ParsedTransaction);
+    if (tx.currency === 'USD' || (tx as any).section === 'exterior') foreign.push(tx as ParsedTransaction);
+  }
+
+  dates.sort();
+  const topCategories = [...catTotals.entries()]
+    .map(([name, v]) => ({ name, total: v.total, count: v.count }))
+    .sort((a, b) => b.total - a.total).slice(0, 6);
+
+  const recurringExpenses = [...descMap.entries()]
+    .filter(([, v]) => v.count >= 2 && v.months.size >= 2)
+    .map(([description, v]) => ({ description, occurrences: v.count, totalAmount: v.total, avgAmount: Math.round(v.total / v.count) }))
+    .sort((a, b) => b.occurrences - a.occurrences).slice(0, 8);
+
+  const monthlyTrend = [...monthMap.entries()]
+    .map(([month, v]) => ({ month, incomes: v.incomes, expenses: v.expenses }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  return {
+    totalIncome, totalExpenses, netBalance: totalIncome - totalExpenses,
+    transactionCount: rows.length,
+    dateRange: { from: dates[0] || '', to: dates[dates.length - 1] || '' },
+    topCategories, recurringExpenses,
+    detectedDebts: debts.map(d => ({ description: d.description, amount: d.amount })).slice(0, 10),
+    foreignExpenses: foreign.map(f => ({ description: f.description, amount: f.amount, currency: f.currency })).slice(0, 10),
+    monthlyTrend,
+  };
 }

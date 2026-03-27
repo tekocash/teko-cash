@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import {
   Menu, X, User, Bell, Settings, LogOut, ChevronDown,
-  Home, Users, DollarSign, PieChart, Plus, Tag,
+  Home, Users, DollarSign, PieChart, Plus, Tag, CreditCard, Database,
   AlertTriangle, TrendingUp, CheckCircle,
 } from 'lucide-react';
 import { PENDING_NOTIFS_KEY, PendingNotif } from '@/features/budgets/hooks/useBudgets';
@@ -100,6 +100,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     { icon: <Home size={20} />, title: 'Inicio', path: '/dashboard' },
     { icon: <DollarSign size={20} />, title: 'Gastos e Ingresos', path: '/transactions' },
     { icon: <PieChart size={20} />, title: 'Presupuestos', path: '/budgets' },
+    { icon: <CreditCard size={20} />, title: 'Mis tarjetas', path: '/cards' },
+    { icon: <Database size={20} />, title: 'Mis datos', path: '/settings?tab=data' },
     { icon: <Tag size={20} />, title: 'Categorías', path: '/categories' },
     { icon: <Users size={20} />, title: 'Grupos Familiares', path: '/family' },
     { icon: <Settings size={20} />, title: 'Configuración', path: '/settings' },
@@ -370,13 +372,13 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             </div>
           </Link>
           <Link
-            to="/budgets"
+            to="/cards"
             className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl transition-colors ${
-              pathname.startsWith('/budgets') ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'
+              pathname.startsWith('/cards') ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'
             }`}
           >
-            <PieChart size={20} />
-            <span className="text-[10px]">Budgets</span>
+            <CreditCard size={20} />
+            <span className="text-[10px]">Tarjetas</span>
           </Link>
           <Link
             to="/settings"

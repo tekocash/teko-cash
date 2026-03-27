@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'react-hot-toast';
@@ -10,8 +11,8 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
-  importBankStatement, detectFormat, formatLabel,
-  type BankFormat, type ImportResult,
+  parseForPreview, importSelected, detectFormat, formatLabel,
+  type BankFormat, type ImportResult, type PreviewRow,
 } from '@/features/transactions/service/bank-importer';
 
 const NOTIF_KEY = 'teko_notif_prefs';
@@ -82,7 +83,11 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
-  const [activeTab, setActiveTab] = useState('profile');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = searchParams.get('tab');
+    return TABS.some(t => t.id === tab) ? tab! : 'profile';
+  });
 
   // Profile state
   const [profile, setProfile] = useState({ displayName: user?.display_name || '', email: user?.email || '' });
@@ -183,12 +188,21 @@ export default function SettingsPage() {
 
   // Smart bank importer state
   const bankInputRef = useRef<HTMLInputElement>(null);
-  const selectedBankFile = useRef<File | null>(null);
   const [bankFormat, setBankFormat] = useState<BankFormat | null>(null);
   const [bankLoading, setBankLoading] = useState(false);
   const [bankProgress, setBankProgress] = useState<{ pct: number; msg: string } | null>(null);
   const [bankResult, setBankResult] = useState<ImportResult | null>(null);
   const [analysisExpanded, setAnalysisExpanded] = useState(false);
+  // Preview table state
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
+  const [previewFormat, setPreviewFormat] = useState<BankFormat>('generic');
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewPage, setPreviewPage] = useState(0);
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'new' | 'dup'>('all');
+  const PREVIEW_PAGE_SIZE = 50;
+  // Category and budget options for preview table inline editing
+  const [previewCategories, setPreviewCategories] = useState<{ id: string; name: string; type: string }[]>([]);
+  const [previewBudgetList, setPreviewBudgetList] = useState<{ id: string; name: string }[]>([]);
 
   // ── Export ──────────────────────────────────────────────────────────────
   const handleExport = async () => {
@@ -393,52 +407,91 @@ export default function SettingsPage() {
     }
   };
 
-  // ── Smart bank file selection (preview format only) ──────────────────────
+  // ── Smart bank file selection → parse + show preview table ──────────────
   const handleBankFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    selectedBankFile.current = file;
+    if (!file || !user?.id) return;
+    if (bankInputRef.current) bankInputRef.current.value = '';
     setBankResult(null);
-    setBankProgress(null);
+    setBankLoading(true);
+    setBankProgress({ pct: 0, msg: 'Leyendo archivo...' });
     try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      setBankFormat(detectFormat(wb, buf));
-    } catch {
-      setBankFormat('generic');
+      const { format, rows } = await parseForPreview(file, user.id, (pct, msg) => setBankProgress({ pct, msg }));
+      setPreviewFormat(format);
+      setBankFormat(format);
+      setPreviewRows(rows);
+      setPreviewPage(0);
+      setPreviewFilter('all');
+      if (rows.length === 0) { toast.error('No se encontraron transacciones en el archivo.'); return; }
+      // Load categories and budgets for inline editing
+      Promise.all([
+        supabase.from('categories').select('id, name, category_type').eq('user_id', user!.id),
+        supabase.from('budgets').select('id, name').eq('user_id', user!.id).order('name'),
+      ]).then(([cats, budgets]) => {
+        if (cats.data) setPreviewCategories(cats.data.map((c: any) => ({ id: c.id, name: c.name, type: c.category_type })));
+        if (budgets.data) setPreviewBudgetList(budgets.data.map((b: any) => ({ id: b.id, name: b.name })));
+      });
+      setShowPreview(true);
+    } catch (err: any) {
+      toast.error('Error al leer el archivo: ' + (err.message || 'desconocido'));
+    } finally {
+      setBankLoading(false);
+      setBankProgress(null);
     }
   };
 
-  const handleImportBankStatement = async () => {
-    const file = selectedBankFile.current;
-    if (!file || !user?.id) return;
+  const handleConfirmImport = async () => {
+    const selected = previewRows.filter(r => r.selected);
+    if (selected.length === 0) { toast.error('No hay transacciones seleccionadas'); return; }
+    if (!user?.id) return;
+    setShowPreview(false);
     setBankLoading(true);
-    setBankResult(null);
-    setBankProgress({ pct: 0, msg: 'Iniciando...' });
+    setBankProgress({ pct: 0, msg: 'Iniciando importación...' });
     try {
       const lookups = await fetchLookups();
-      const result = await importBankStatement(
-        file, user.id, lookups,
+      const result = await importSelected(
+        selected, user.id, lookups, previewFormat,
         (pct, msg) => setBankProgress({ pct, msg })
       );
       setBankResult(result);
-      // Persist for dashboard alert
       localStorage.setItem('teko_last_import_analysis', JSON.stringify({
         savedAt: new Date().toISOString(),
         analysis: result.analysis,
         format: result.format,
       }));
       if (result.ok > 0) toast.success(`${result.ok} transacciones importadas`);
-      if (result.duplicatesSkipped > 0) toast(`${result.duplicatesSkipped} duplicadas omitidas`, { icon: 'ℹ️' });
       if (result.failed > 0) toast.error(`${result.failed} fallaron`);
     } catch (err: any) {
       toast.error('Error al importar: ' + (err.message || 'desconocido'));
     } finally {
       setBankLoading(false);
       setBankProgress(null);
-      selectedBankFile.current = null;
-      if (bankInputRef.current) bankInputRef.current.value = '';
     }
+  };
+
+  const togglePreviewRow = (id: string) => {
+    setPreviewRows(rows => rows.map(r => r.previewId === id ? { ...r, selected: !r.selected } : r));
+  };
+  const toggleAllPreview = (val: boolean) => {
+    setPreviewRows(rows => rows.map(r => ({ ...r, selected: val })));
+  };
+  const selectOnlyNew = () => {
+    setPreviewRows(rows => rows.map(r => ({ ...r, selected: !r.isDuplicate })));
+  };
+
+  const updateRowCategory = (previewId: string, catName: string) => {
+    const cat = previewCategories.find(c => c.name === catName);
+    setPreviewRows(rows => rows.map(r =>
+      r.previewId === previewId
+        ? { ...r, suggestedCategory: catName || null, suggestedCategoryType: (cat?.type as 'income' | 'expense') ?? (r.direction === 'income' ? 'income' : 'expense') }
+        : r
+    ));
+  };
+
+  const updateRowBudget = (previewId: string, budgetId: string) => {
+    setPreviewRows(rows => rows.map(r =>
+      r.previewId === previewId ? { ...r, budgetId: budgetId || null } : r
+    ));
   };
 
   const inputCls = "w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200";
@@ -905,176 +958,257 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Importar extracto bancario</p>
-                  <p className="text-xs text-gray-400">Detecta el formato automáticamente • Atlas Bank, Itaú Tarjeta, Itaú Ahorro</p>
+                  <p className="text-xs text-gray-400">Detecta el formato · Atlas Bank, Itaú Tarjeta, Itaú Ahorro · Revisás antes de confirmar</p>
                 </div>
               </div>
 
               <input ref={bankInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBankFileChange} />
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => bankInputRef.current?.click()}
-                  disabled={bankLoading}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-300 dark:border-violet-700 bg-white dark:bg-gray-800 text-violet-700 dark:text-violet-300 text-sm font-medium hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors disabled:opacity-50"
-                >
-                  <Upload size={14} />
-                  Seleccionar archivo
-                </button>
+              <button
+                onClick={() => bankInputRef.current?.click()}
+                disabled={bankLoading}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-300 dark:border-violet-700 bg-white dark:bg-gray-800 text-violet-700 dark:text-violet-300 text-sm font-medium hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors disabled:opacity-50"
+              >
+                <Upload size={14} />
+                {bankLoading ? 'Procesando...' : 'Seleccionar archivo (.xlsx / .xls)'}
+              </button>
 
-                {bankFormat && !bankLoading && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-xs font-medium">
-                    {formatLabel(bankFormat)}
-                  </span>
-                )}
-
-                {selectedBankFile.current && !bankLoading && (
-                  <button
-                    onClick={handleImportBankStatement}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors"
-                  >
-                    <FileSpreadsheet size={14} />
-                    Importar ahora
-                  </button>
-                )}
-              </div>
-
-              {/* Progress bar */}
               {bankLoading && bankProgress && (
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>{bankProgress.msg}</span>
-                    <span>{bankProgress.pct}%</span>
+                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>{bankProgress.msg}</span><span>{bankProgress.pct}%</span>
                   </div>
                   <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-violet-500 rounded-full transition-all duration-300"
-                      style={{ width: `${bankProgress.pct}%` }}
-                    />
+                    <div className="h-full bg-violet-500 rounded-full transition-all duration-300" style={{ width: `${bankProgress.pct}%` }} />
                   </div>
                 </div>
               )}
 
               {/* Results */}
-              {bankResult && (
-                <div className="space-y-3">
-                  <div className={`rounded-xl p-4 text-sm space-y-2 ${bankResult.failed > 0 ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'}`}>
-                    <div className="flex items-center gap-2 font-semibold">
-                      <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <span className="text-emerald-700 dark:text-emerald-300">
-                        {bankResult.ok} importadas • {bankResult.duplicatesSkipped} duplicadas omitidas{bankResult.failed > 0 ? ` • ${bankResult.failed} fallaron` : ''}
-                      </span>
+              {bankResult && (() => {
+                const a = bankResult.analysis;
+                const fmtA = (n: number, cur = 'PYG') => cur === 'USD'
+                  ? `$${n.toLocaleString('es-PY', { maximumFractionDigits: 2 })}`
+                  : new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
+                return (
+                  <div className="space-y-3">
+                    <div className="rounded-xl p-4 text-sm space-y-2 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span className="text-emerald-700 dark:text-emerald-300">
+                          {bankResult.ok} importadas{bankResult.failed > 0 ? ` · ${bankResult.failed} fallaron` : ''}
+                        </span>
+                      </div>
+                      {bankResult.newCategoriesCreated.length > 0 && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Categorías creadas: {bankResult.newCategoriesCreated.map(c => <span key={c} className="inline-block bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-full px-2 py-0.5 mr-1 mb-0.5">{c}</span>)}
+                        </p>
+                      )}
                     </div>
-                    {bankResult.newCategoriesCreated.length > 0 && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Categorías creadas: {bankResult.newCategoriesCreated.map(c => <span key={c} className="inline-block bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-full px-2 py-0.5 mr-1 mb-0.5">{c}</span>)}
-                      </p>
-                    )}
-                    {bankResult.newPaymentMethodsCreated.length > 0 && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Métodos creados: {bankResult.newPaymentMethodsCreated.map(p => <span key={p} className="inline-block bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full px-2 py-0.5 mr-1">{p}</span>)}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Analysis accordion */}
-                  <button
-                    onClick={() => setAnalysisExpanded(x => !x)}
-                    className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700/60 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                  >
-                    <span>📊 Análisis financiero del extracto</span>
-                    <ChevronDown size={15} className={`transition-transform ${analysisExpanded ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {analysisExpanded && (() => {
-                    const a = bankResult.analysis;
-                    const fmt = (n: number, cur = 'PYG') => cur === 'USD'
-                      ? `$${n.toLocaleString('es-PY', { maximumFractionDigits: 2 })}`
-                      : new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
-                    return (
+                    <button
+                      onClick={() => setAnalysisExpanded(x => !x)}
+                      className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700/60 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      <span>📊 Análisis financiero del extracto</span>
+                      <ChevronDown size={15} className={`transition-transform ${analysisExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                    {analysisExpanded && (
                       <div className="rounded-xl border border-gray-100 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 text-sm">
-                        {/* Summary */}
-                        <div className="grid grid-cols-3 gap-0">
-                          {[
-                            { label: 'Ingresos', value: fmt(a.totalIncome), color: 'text-emerald-600 dark:text-emerald-400' },
-                            { label: 'Gastos', value: fmt(a.totalExpenses), color: 'text-red-500 dark:text-red-400' },
-                            { label: 'Balance', value: fmt(a.netBalance), color: a.netBalance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400' },
-                          ].map(s => (
-                            <div key={s.label} className="p-3 text-center">
-                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">{s.label}</p>
-                              <p className={`text-xs font-bold mt-0.5 ${s.color}`}>{s.value}</p>
+                        <div className="grid grid-cols-3">
+                          {[['Ingresos', fmtA(a.totalIncome), 'text-emerald-600 dark:text-emerald-400'], ['Gastos', fmtA(a.totalExpenses), 'text-red-500 dark:text-red-400'], ['Balance', fmtA(a.netBalance), a.netBalance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400']].map(([l, v, cls]) => (
+                            <div key={l as string} className="p-3 text-center">
+                              <p className="text-[10px] text-gray-400 uppercase tracking-wide">{l}</p>
+                              <p className={`text-xs font-bold mt-0.5 ${cls}`}>{v}</p>
                             </div>
                           ))}
                         </div>
-                        {/* Period */}
-                        {a.dateRange.from && (
-                          <div className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
-                            Período: <strong>{a.dateRange.from}</strong> → <strong>{a.dateRange.to}</strong> · {a.transactionCount} transacciones
-                          </div>
-                        )}
-                        {/* Top categories */}
+                        {a.dateRange.from && <div className="px-4 py-2 text-xs text-gray-400">{a.dateRange.from} → {a.dateRange.to} · {a.transactionCount} transacciones</div>}
                         {a.topCategories.length > 0 && (
                           <div className="p-4 space-y-2">
-                            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Top categorías de gasto</p>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Top categorías</p>
                             {a.topCategories.map(c => (
                               <div key={c.name} className="flex items-center gap-2">
                                 <span className="text-xs text-gray-600 dark:text-gray-300 w-36 truncate">{c.name}</span>
                                 <div className="flex-1 h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                                   <div className="h-full bg-violet-400 rounded-full" style={{ width: `${Math.min(100, (c.total / a.topCategories[0].total) * 100)}%` }} />
                                 </div>
-                                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">{fmt(c.total)}</span>
+                                <span className="text-xs text-gray-400 shrink-0">{fmtA(c.total)}</span>
                               </div>
                             ))}
                           </div>
                         )}
-                        {/* Recurring */}
                         {a.recurringExpenses.length > 0 && (
                           <div className="p-4 space-y-1.5">
-                            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Gastos recurrentes detectados</p>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Gastos recurrentes</p>
                             {a.recurringExpenses.slice(0, 5).map(r => (
-                              <div key={r.description} className="flex items-center justify-between">
-                                <span className="text-xs text-gray-600 dark:text-gray-300 truncate max-w-[200px]">{r.description}</span>
-                                <span className="text-xs text-gray-400">{r.occurrences}× · {fmt(r.avgAmount)}/vez</span>
+                              <div key={r.description} className="flex justify-between text-xs">
+                                <span className="text-gray-600 dark:text-gray-300 truncate max-w-[180px]">{r.description}</span>
+                                <span className="text-gray-400 shrink-0 ml-2">{r.occurrences}× · {fmtA(r.avgAmount)}</span>
                               </div>
                             ))}
                           </div>
                         )}
-                        {/* Debts */}
-                        {a.detectedDebts.length > 0 && (
-                          <div className="px-4 py-3">
-                            <p className="text-xs font-semibold text-red-500 uppercase tracking-wide mb-1">Préstamos / cuotas detectadas ({a.detectedDebts.length})</p>
-                            {a.detectedDebts.slice(0, 4).map((d, i) => (
-                              <p key={i} className="text-xs text-gray-500 dark:text-gray-400 truncate">{d.description} · {fmt(d.amount)}</p>
-                            ))}
-                          </div>
-                        )}
-                        {/* Foreign */}
-                        {a.foreignExpenses.length > 0 && (
-                          <div className="px-4 py-3">
-                            <p className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">Gastos exterior / USD ({a.foreignExpenses.length})</p>
-                            {a.foreignExpenses.slice(0, 4).map((f, i) => (
-                              <p key={i} className="text-xs text-gray-500 dark:text-gray-400 truncate">{f.description} · {fmt(f.amount, f.currency)}</p>
-                            ))}
-                          </div>
-                        )}
-                        {/* Monthly trend */}
                         {a.monthlyTrend.length > 1 && (
-                          <div className="p-4 space-y-2">
-                            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Tendencia mensual</p>
+                          <div className="p-4 space-y-1.5">
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Por mes</p>
                             {a.monthlyTrend.map(m => (
                               <div key={m.month} className="flex items-center gap-2 text-xs">
                                 <span className="text-gray-400 w-16">{m.month}</span>
-                                <span className="text-emerald-600 dark:text-emerald-400 w-28 truncate">↑ {fmt(m.incomes)}</span>
-                                <span className="text-red-500 dark:text-red-400 truncate">↓ {fmt(m.expenses)}</span>
+                                <span className="text-emerald-600 dark:text-emerald-400">↑{fmtA(m.incomes)}</span>
+                                <span className="text-red-500 ml-auto">↓{fmtA(m.expenses)}</span>
                               </div>
                             ))}
                           </div>
                         )}
                       </div>
-                    );
-                  })()}
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
             </div>
+
+            {/* Preview modal */}
+            {showPreview && (() => {
+              const fmtPrev = (n: number, cur = 'PYG') => cur === 'USD'
+                ? `$${n.toFixed(2)}`
+                : new Intl.NumberFormat('es-PY', { maximumFractionDigits: 0 }).format(n);
+              const filtered = previewFilter === 'new' ? previewRows.filter(r => !r.isDuplicate)
+                : previewFilter === 'dup' ? previewRows.filter(r => r.isDuplicate)
+                : previewRows;
+              const totalPages = Math.ceil(filtered.length / PREVIEW_PAGE_SIZE);
+              const pageRows = filtered.slice(previewPage * PREVIEW_PAGE_SIZE, (previewPage + 1) * PREVIEW_PAGE_SIZE);
+              const selectedCount = previewRows.filter(r => r.selected).length;
+              const dupCount = previewRows.filter(r => r.isDuplicate).length;
+              const newCount = previewRows.length - dupCount;
+
+              return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm">
+                  <div className="w-full max-w-4xl bg-white dark:bg-gray-800 rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-700 shrink-0">
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                          Revisar transacciones — {formatLabel(previewFormat)}
+                        </h3>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {previewRows.length} totales · <span className="text-emerald-600 dark:text-emerald-400">{newCount} nuevas</span> · <span className="text-amber-500">{dupCount} posibles duplicadas</span>
+                        </p>
+                      </div>
+                      <button onClick={() => setShowPreview(false)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"><X size={18} /></button>
+                    </div>
+
+                    {/* Filters + bulk actions */}
+                    <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-gray-100 dark:border-gray-700 shrink-0">
+                      {(['all', 'new', 'dup'] as const).map(f => (
+                        <button key={f} onClick={() => { setPreviewFilter(f); setPreviewPage(0); }}
+                          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${previewFilter === f ? 'bg-violet-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}>
+                          {f === 'all' ? `Todas (${previewRows.length})` : f === 'new' ? `Nuevas (${newCount})` : `Duplicadas (${dupCount})`}
+                        </button>
+                      ))}
+                      <div className="ml-auto flex gap-2">
+                        <button onClick={() => toggleAllPreview(true)} className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600">Seleccionar todas</button>
+                        <button onClick={selectOnlyNew} className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-xs text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50">Solo nuevas</button>
+                        <button onClick={() => toggleAllPreview(false)} className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600">Deseleccionar</button>
+                      </div>
+                    </div>
+
+                    {/* Table */}
+                    <div className="overflow-auto flex-1">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-gray-50 dark:bg-gray-900/60">
+                          <tr>
+                            <th className="px-3 py-2 text-left w-8">
+                              <input type="checkbox"
+                                checked={previewRows.every(r => r.selected)}
+                                onChange={e => toggleAllPreview(e.target.checked)}
+                                className="rounded"
+                              />
+                            </th>
+                            <th className="px-3 py-2 text-left text-gray-500 dark:text-gray-400 font-medium">Fecha</th>
+                            <th className="px-3 py-2 text-left text-gray-500 dark:text-gray-400 font-medium">Tipo</th>
+                            <th className="px-3 py-2 text-right text-gray-500 dark:text-gray-400 font-medium">Monto</th>
+                            <th className="px-3 py-2 text-left text-gray-500 dark:text-gray-400 font-medium">Descripción</th>
+                            <th className="px-3 py-2 text-left text-gray-500 dark:text-gray-400 font-medium">Categoría</th>
+                            <th className="px-3 py-2 text-left text-gray-500 dark:text-gray-400 font-medium">Presupuesto</th>
+                            <th className="px-3 py-2 text-center text-gray-500 dark:text-gray-400 font-medium">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+                          {pageRows.map(row => (
+                            <tr key={row.previewId}
+                              onClick={() => togglePreviewRow(row.previewId)}
+                              className={`cursor-pointer transition-colors ${row.selected ? 'bg-white dark:bg-gray-800' : 'bg-gray-50/60 dark:bg-gray-900/20 opacity-60'} hover:bg-violet-50/30 dark:hover:bg-violet-900/10`}
+                            >
+                              <td className="px-3 py-2">
+                                <input type="checkbox" checked={row.selected} onChange={() => togglePreviewRow(row.previewId)} onClick={e => e.stopPropagation()} className="rounded" />
+                              </td>
+                              <td className="px-3 py-2 text-gray-600 dark:text-gray-300 whitespace-nowrap">{row.date}</td>
+                              <td className="px-3 py-2">
+                                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${row.direction === 'income' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300' : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'}`}>
+                                  {row.direction === 'income' ? 'Ingreso' : 'Gasto'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-gray-800 dark:text-gray-200 whitespace-nowrap">
+                                {fmtPrev(row.amount, row.currency)} {row.currency !== 'PYG' && <span className="text-gray-400 text-[10px]">{row.currency}</span>}
+                              </td>
+                              <td className="px-3 py-2 text-gray-600 dark:text-gray-300 max-w-[200px] truncate">{row.description}</td>
+                              <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
+                                <select
+                                  value={row.suggestedCategory ?? ''}
+                                  onChange={e => updateRowCategory(row.previewId, e.target.value)}
+                                  className="w-full text-[11px] px-1.5 py-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                >
+                                  <option value="">— Sin categoría —</option>
+                                  {previewCategories.map(c => (
+                                    <option key={c.id} value={c.name}>{c.name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
+                                <select
+                                  value={row.budgetId ?? ''}
+                                  onChange={e => updateRowBudget(row.previewId, e.target.value)}
+                                  className="w-full text-[11px] px-1.5 py-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                >
+                                  <option value="">— Sin presupuesto —</option>
+                                  {previewBudgetList.map(b => (
+                                    <option key={b.id} value={b.id}>{b.name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                {row.isDuplicate
+                                  ? <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">Duplicada</span>
+                                  : <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">Nueva</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination + confirm */}
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 dark:border-gray-700 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setPreviewPage(p => Math.max(0, p - 1))} disabled={previewPage === 0}
+                          className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs disabled:opacity-40">‹ Anterior</button>
+                        <span className="text-xs text-gray-400">Página {previewPage + 1}/{Math.max(1, totalPages)}</span>
+                        <button onClick={() => setPreviewPage(p => Math.min(totalPages - 1, p + 1))} disabled={previewPage >= totalPages - 1}
+                          className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs disabled:opacity-40">Siguiente ›</button>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount} seleccionadas</span>
+                        <button onClick={handleConfirmImport} disabled={selectedCount === 0}
+                          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-sm font-medium transition-colors">
+                          <FileSpreadsheet size={14} />
+                          Importar {selectedCount > 0 ? selectedCount : ''} transacciones
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Import result */}
             {importResult && (

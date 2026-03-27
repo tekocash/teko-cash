@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek,
-  startOfYear, endOfYear, subMonths, startOfDay, endOfDay,
+  startOfYear, endOfYear, subMonths, subYears, startOfDay, endOfDay,
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -37,7 +37,10 @@ const PERIODS = [
   { label: 'Mes ant.',  start: format(startOfMonth(subMonths(now, 1)), 'yyyy-MM-dd'),          end: format(endOfMonth(subMonths(now, 1)), 'yyyy-MM-dd') },
   { label: '3 meses',   start: format(startOfMonth(subMonths(now, 2)), 'yyyy-MM-dd'),          end: format(endOfMonth(now), 'yyyy-MM-dd') },
   { label: 'Este año',  start: format(startOfYear(now), 'yyyy-MM-dd'),                        end: format(endOfYear(now), 'yyyy-MM-dd') },
+  { label: 'Año ant.',  start: format(startOfYear(subYears(now, 1)), 'yyyy-MM-dd'),            end: format(endOfYear(subYears(now, 1)), 'yyyy-MM-dd') },
 ];
+
+const PAGE_SIZE = 50;
 
 const CHART_COLORS = ['#6366f1','#f43f5e','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
 
@@ -48,7 +51,8 @@ export default function TransactionList() {
   const { items, isLoading, filters, setFilters, totals, reload } = useTransactions();
   const [showCustom, setShowCustom] = useState(false);
   const [activePeriod, setActivePeriod] = useState(2);
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [viewMode, setViewMode] = useState<ViewMode>('analytics');
+  const [page, setPage] = useState(0);
 
   const balance = totals.incomes - totals.expenses;
 
@@ -101,12 +105,14 @@ export default function TransactionList() {
   const applyPeriod = (idx: number) => {
     setActivePeriod(idx);
     setShowCustom(false);
+    setPage(0);
     const p = PERIODS[idx];
     setFilters(f => ({ ...f, startDate: p.start, endDate: p.end }));
   };
 
   const applyCustomDate = (field: 'startDate' | 'endDate', value: string) => {
     setActivePeriod(-1);
+    setPage(0);
     setFilters(f => ({ ...f, [field]: value }));
   };
 
@@ -179,6 +185,10 @@ export default function TransactionList() {
   // avg ticket
   const avgExpense = expenses.length > 0 ? totals.expenses / expenses.length : 0;
   const maxExpense = expenses.length > 0 ? Math.max(...expenses.map(t => t.amount)) : 0;
+
+  // Pagination
+  const totalPages = Math.ceil(items.length / PAGE_SIZE);
+  const paginatedItems = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -441,7 +451,7 @@ export default function TransactionList() {
               </div>
 
               <div className="divide-y divide-gray-50 dark:divide-gray-700">
-                {items.map(tx => (
+                {paginatedItems.map(tx => (
                   <div key={tx.id} className="flex sm:grid sm:grid-cols-[2fr_1fr_1fr_1fr_auto_auto] gap-x-4 items-center px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group">
                     {/* Concepto + icon */}
                     <div className="flex items-center gap-3 min-w-0 flex-1 sm:flex-none">
@@ -511,12 +521,33 @@ export default function TransactionList() {
                 ))}
               </div>
 
-              {/* Footer count */}
-              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-100 dark:border-gray-700">
-                <p className="text-xs text-gray-400 text-center">
+              {/* Footer count + pagination */}
+              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between gap-2">
+                <p className="text-xs text-gray-400">
                   {items.length} transacción{items.length !== 1 ? 'es' : ''}
-                  {activePeriod >= 0 ? ` · ${PERIODS[activePeriod].label}` : ' · Período personalizado'}
+                  {activePeriod >= 0 ? ` · ${PERIODS[activePeriod].label}` : ' · Personalizado'}
                 </p>
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      disabled={page === 0}
+                      onClick={() => setPage(p => p - 1)}
+                      className="px-2 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    >
+                      ‹
+                    </button>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 px-1">
+                      {page + 1} / {totalPages}
+                    </span>
+                    <button
+                      disabled={page >= totalPages - 1}
+                      onClick={() => setPage(p => p + 1)}
+                      className="px-2 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    >
+                      ›
+                    </button>
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -563,15 +594,36 @@ export default function TransactionList() {
                   </button>
                 ))}
               </div>
+              {/* Amount with thousands separator */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Monto</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={new Intl.NumberFormat('es-PY', { maximumFractionDigits: 0 }).format(Number(editTx.amount) || 0)}
+                  onFocus={e => { e.target.value = editTx.amount; }}
+                  onChange={e => {
+                    const raw = e.target.value.replace(/[^\d]/g, '');
+                    setEditTx(t => t ? ({ ...t, amount: raw }) : t);
+                    e.target.value = raw;
+                  }}
+                  onBlur={e => {
+                    const raw = e.target.value.replace(/[^\d]/g, '');
+                    setEditTx(t => t ? ({ ...t, amount: raw }) : t);
+                    e.target.value = new Intl.NumberFormat('es-PY', { maximumFractionDigits: 0 }).format(Number(raw) || 0);
+                  }}
+                  className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200"
+                />
+              </div>
               {[
-                { label: 'Monto', key: 'amount' as const, type: 'number', placeholder: '0' },
                 { label: 'Concepto', key: 'concepto' as const, type: 'text', placeholder: 'Ej. Compra supermercado' },
                 { label: 'Comercio', key: 'comercio' as const, type: 'text', placeholder: 'Ej. Stock Center' },
                 { label: 'Fecha', key: 'date' as const, type: 'date', placeholder: '' },
               ].map(f => (
                 <div key={f.key}>
                   <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{f.label}</label>
-                  <input type={f.type} value={editTx[f.key]} placeholder={f.placeholder}
+                  <input type={f.type} value={editTx[f.key] ?? ''} placeholder={f.placeholder}
                     onChange={e => setEditTx(t => t ? ({ ...t, [f.key]: e.target.value }) : t)}
                     className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-800 dark:text-gray-200"
                   />
