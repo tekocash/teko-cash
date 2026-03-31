@@ -1,0 +1,22 @@
+[build]
+  command   = "npm run build"
+  publish   = "dist"
+
+# SPA routing — send all paths to index.html
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# Fix MIME type for ES module workers (.mjs) used by pdfjs-dist
+# Without this Netlify sends application/octet-stream and the browser
+# refuses to load the script as a module (strict MIME checking).
+[[headers]]
+  for = "/*.mjs"
+  [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"
+
+[[headers]]
+  for = "/assets/*.mjs"
+  [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"
