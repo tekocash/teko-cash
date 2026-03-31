@@ -2,6 +2,11 @@
   command   = "npm run build"
   publish   = "dist"
 
+# Supabase anon key and URL are intentionally public (client-side) values
+# protected by Row Level Security — not real secrets, safe to be in bundle.
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "VITE_PUBLIC_SUPABASE_ANON_KEY,VITE_PUBLIC_SUPABASE_URL,VITE_SUPABASE_ANON_KEY,VITE_SUPABASE_URL"
+
 # SPA routing — send all paths to index.html
 [[redirects]]
   from   = "/*"
