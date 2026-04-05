@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import AuthGuard from './features/auth/components/AuthGuard';
 import LoadingScreen from './components/shared/LoadingScreen';
@@ -24,6 +24,10 @@ const FamilyPage = lazy(() => import('./app/protected/family/Family'));
 const SettingsPage = lazy(() => import('./app/protected/settings/Settings'));
 const CategoriesPage = lazy(() => import('./features/categories/CategoryManagment'));
 const CreditCardsPage = lazy(() => import('./app/protected/cards/CreditCards'));
+const CalendarPage = lazy(() => import('./features/calendar/CalendarView'));
+const LandingPage = lazy(() => import('./app/public/Landing'));
+const PrivacyPage = lazy(() => import('./app/public/Privacy'));
+const TermsPage = lazy(() => import('./app/public/Terms'));
 
 function App() {
   return (
@@ -31,13 +35,15 @@ function App() {
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
 
-       {/*  Ruta base pública (cuando entras a /) */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
+        {/* Landing page pública */}
+        <Route path="/" element={<LandingPage />} />
 
           {/* Rutas públicas/auth */}
           <Route path="/login" element={<LoginPage />} />
 
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
           
           {/* Rutas protegidas */}
           <Route element={<ProtectedLayout />}>
@@ -48,6 +54,7 @@ function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/cards" element={<CreditCardsPage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
           </Route>
         </Routes>
       </Suspense>

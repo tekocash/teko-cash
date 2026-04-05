@@ -16,11 +16,18 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      // injectManifest lets us write a custom SW that handles push events
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       manifest: {
         name: 'Teko Cash',
         short_name: 'TekoCash',
         description: 'Aplicación de gestión financiera personal',
         theme_color: '#0066FF',
+        background_color: '#ffffff',
+        display: 'standalone',
+        start_url: '/dashboard',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -33,7 +40,11 @@ export default defineConfig({
             type: 'image/png'
           }
         ]
-      }
+      },
+      devOptions: {
+        enabled: true,
+        type: 'module',
+      },
     }),
     visualizer()
   ],

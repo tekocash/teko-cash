@@ -4,7 +4,7 @@ import { useAuthStore } from '@/store/auth-store';
 import {
   Menu, X, User, Bell, Settings, LogOut, ChevronDown,
   Home, Users, DollarSign, PieChart, Plus, Tag, CreditCard, Database,
-  AlertTriangle, TrendingUp, CheckCircle,
+  AlertTriangle, TrendingUp, CheckCircle, CalendarDays,
 } from 'lucide-react';
 import { PENDING_NOTIFS_KEY, PendingNotif } from '@/features/budgets/hooks/useBudgets';
 
@@ -100,6 +100,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     { icon: <Home size={20} />, title: 'Inicio', path: '/dashboard' },
     { icon: <DollarSign size={20} />, title: 'Gastos e Ingresos', path: '/transactions' },
     { icon: <PieChart size={20} />, title: 'Presupuestos', path: '/budgets' },
+    { icon: <CalendarDays size={20} />, title: 'Calendario', path: '/calendar' },
     { icon: <CreditCard size={20} />, title: 'Mis tarjetas', path: '/cards' },
     { icon: <Database size={20} />, title: 'Mis datos', path: '/settings?tab=data' },
     { icon: <Tag size={20} />, title: 'Categorías', path: '/categories' },

@@ -14,6 +14,10 @@ import {
   parseForPreview, importSelected, detectFormat, formatLabel,
   type BankFormat, type ImportResult, type PreviewRow,
 } from '@/features/transactions/service/bank-importer';
+import {
+  isPushSupported, getPermissionState, requestPermission,
+  subscribeToPush, unsubscribeFromPush, isSubscribed,
+} from '@/lib/notifications/push';
 
 const NOTIF_KEY = 'teko_notif_prefs';
 
@@ -66,15 +70,16 @@ function emojiForType(type: string) {
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full overflow-hidden transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
         checked ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-600'
       }`}
     >
       <span
-        className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${
-          checked ? 'translate-x-5.5' : 'translate-x-0.5'
-        }`}
+        className="inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 mt-0.5"
         style={{ transform: checked ? 'translateX(22px)' : 'translateX(2px)' }}
       />
     </button>
@@ -133,6 +138,52 @@ export default function SettingsPage() {
 
   const setNotif = <K extends keyof NotifPrefs>(key: K, value: NotifPrefs[K]) => {
     setNotifs(n => ({ ...n, [key]: value }));
+  };
+
+  // Push notification state
+  const [pushSupported] = useState(isPushSupported);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission>(getPermissionState);
+  const [pushLoading, setPushLoading] = useState(false);
+
+  // Sync pushEnabled pref with actual subscription state on mount
+  useEffect(() => {
+    if (!pushSupported || !user?.id) return;
+    isSubscribed().then(subscribed => {
+      if (notifs.pushEnabled !== subscribed) {
+        setNotif('pushEnabled', subscribed);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushSupported, user?.id]);
+
+  const handleTogglePush = async (enable: boolean) => {
+    if (!user?.id) return;
+    setPushLoading(true);
+    try {
+      if (enable) {
+        const permission = await requestPermission();
+        setPushPermission(permission);
+        if (permission !== 'granted') {
+          toast.error('Permiso denegado. Habilitá las notificaciones en la configuración del navegador.');
+          return;
+        }
+        const sub = await subscribeToPush(user.id);
+        if (sub) {
+          setNotif('pushEnabled', true);
+          toast.success('Notificaciones push activadas');
+        } else {
+          toast.error('No se pudo activar. Verificá que la app esté en HTTPS.');
+        }
+      } else {
+        await unsubscribeFromPush(user.id);
+        setNotif('pushEnabled', false);
+        toast.success('Notificaciones push desactivadas');
+      }
+    } catch (err) {
+      toast.error('Error al configurar notificaciones push');
+    } finally {
+      setPushLoading(false);
+    }
   };
 
   const handleSaveProfile = (e: React.FormEvent) => {
@@ -806,22 +857,45 @@ export default function SettingsPage() {
 
             {/* Channels */}
             <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Canales (próximamente)</p>
-              {[
-                { key: 'emailEnabled' as const, label: 'Email', sub: user?.email || 'Sin email', icon: <Mail size={16} className="text-gray-400" />, disabled: true },
-                { key: 'pushEnabled' as const, label: 'Push en el navegador', sub: 'Requiere permiso del navegador', icon: <Smartphone size={16} className="text-gray-400" />, disabled: true },
-              ].map(item => (
-                <div key={item.key} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-700/50 opacity-60">
-                  <div className="flex items-center gap-3">
-                    {item.icon}
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{item.label}</p>
-                      <p className="text-xs text-gray-400">{item.sub}</p>
-                    </div>
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Canales</p>
+
+              {/* Email — coming soon */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-700/50 opacity-60">
+                <div className="flex items-center gap-3">
+                  <Mail size={16} className="text-gray-400" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Email</p>
+                    <p className="text-xs text-gray-400">{user?.email || 'Sin email'} · próximamente</p>
                   </div>
-                  <Toggle checked={false} onChange={() => toast('Próximamente disponible', { icon: '🔔' })} />
                 </div>
-              ))}
+                <Toggle checked={false} onChange={() => toast('Email disponible próximamente', { icon: '📧' })} />
+              </div>
+
+              {/* Web Push — real implementation */}
+              <div className={`flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-700/50 ${!pushSupported ? 'opacity-50' : ''}`}>
+                <div className="flex items-center gap-3">
+                  <Smartphone size={16} className={notifs.pushEnabled ? 'text-indigo-500' : 'text-gray-400'} />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Push en el navegador
+                      {pushLoading && <span className="ml-2 text-xs text-gray-400">Cargando…</span>}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {!pushSupported
+                        ? 'Tu navegador no soporta notificaciones push'
+                        : pushPermission === 'denied'
+                          ? 'Permiso bloqueado — habilitalo en ajustes del navegador'
+                          : notifs.pushEnabled
+                            ? 'Recibirás alertas aunque la app esté cerrada'
+                            : 'Activa para recibir alertas en este dispositivo'}
+                    </p>
+                  </div>
+                </div>
+                <Toggle
+                  checked={notifs.pushEnabled}
+                  onChange={handleTogglePush}
+                />
+              </div>
             </div>
 
             {/* Reports */}

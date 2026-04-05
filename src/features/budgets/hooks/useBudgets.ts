@@ -42,7 +42,14 @@ function markAlertSeen(key: string) {
   localStorage.setItem(ALERT_SEEN_KEY, JSON.stringify([...seen]));
 }
 
-function checkBudgetAlerts(budgets: BudgetItem[]) {
+function triggerServerPush(userId: string, budgetName: string, pct: number, type: 'warn' | 'over') {
+  // Fire-and-forget: call Edge Function to push to all subscribed devices
+  supabase.functions.invoke('send-budget-push', {
+    body: { userId, budgetName, pct, type },
+  }).catch(() => {/* silent — push is best-effort */});
+}
+
+function checkBudgetAlerts(budgets: BudgetItem[], userId?: string) {
   const prefs = getNotifPrefs();
   if (prefs.budgetAlert === false) return;
   const threshold = prefs.budgetThreshold ?? 80;
@@ -59,10 +66,12 @@ function checkBudgetAlerts(budgets: BudgetItem[]) {
       toast.error(`Presupuesto superado: "${b.name}" — gastaste ${Math.round(pct)}%`, { duration: 5000 });
       markAlertSeen(overKey);
       pushPendingNotif({ id: overKey, budgetName: b.name, pct: Math.round(pct), type: 'over', timestamp: Date.now() });
+      if (userId && prefs.pushEnabled) triggerServerPush(userId, b.name, Math.round(pct), 'over');
     } else if (pct >= threshold && pct < 100 && !seen.has(warnKey)) {
       toast(`"${b.name}": ya usaste el ${Math.round(pct)}% de tu estimado`, { icon: '⚠️', duration: 5000 });
       markAlertSeen(warnKey);
       pushPendingNotif({ id: warnKey, budgetName: b.name, pct: Math.round(pct), type: 'warn', timestamp: Date.now() });
+      if (userId && prefs.pushEnabled) triggerServerPush(userId, b.name, Math.round(pct), 'warn');
     }
   });
 }
@@ -194,7 +203,7 @@ export function useBudgets() {
       );
 
       setBudgets(withSpending);
-      checkBudgetAlerts(withSpending);
+      checkBudgetAlerts(withSpending, user?.id);
     } catch (e: any) {
       setError(e.message || 'Error al cargar presupuestos');
     } finally {
@@ -203,6 +212,20 @@ export function useBudgets() {
   }, [user?.id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: re-check alerts whenever a transaction is inserted/updated/deleted
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel('budget-alert-listener')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `user_id=eq.${user.id}` },
+        () => { load(); }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id, load]);
 
   const createBudget = async (input: CreateBudgetInput): Promise<{ error: any }> => {
     if (!user?.id) return { error: 'No hay sesión activa' };
