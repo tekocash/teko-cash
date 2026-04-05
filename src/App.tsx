@@ -28,6 +28,7 @@ const CalendarPage = lazy(() => import('./features/calendar/CalendarView'));
 const LandingPage = lazy(() => import('./app/public/Landing'));
 const PrivacyPage = lazy(() => import('./app/public/Privacy'));
 const TermsPage = lazy(() => import('./app/public/Terms'));
+const TutorialPage = lazy(() => import('./app/public/Tutorial'));
 
 function App() {
   return (
@@ -44,6 +45,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/terms" element={<TermsPage />} />
+          <Route path="/tutorial" element={<TutorialPage />} />
           
           {/* Rutas protegidas */}
           <Route element={<ProtectedLayout />}>

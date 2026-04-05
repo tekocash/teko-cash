@@ -80,8 +80,8 @@ export default function LandingPage() {
           <nav className="hidden sm:flex items-center gap-6 text-sm text-gray-600 dark:text-gray-400">
             <a href="#features" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Características</a>
             <a href="#pricing" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Precios</a>
+            <Link to="/tutorial" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Tutorial</Link>
             <a href="#opensource" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Open Source</a>
-            <a href="/privacy" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Privacidad</a>
           </nav>
           <div className="flex items-center gap-3">
             <Link to="/login" className="text-sm text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">

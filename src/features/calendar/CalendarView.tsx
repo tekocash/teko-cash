@@ -18,7 +18,7 @@ interface TxDay {
   amount: number;
   concepto: string | null;
   comercio: string | null;
-  category: { name: string; icon: string } | null;
+  category: { name: string; category_type: string } | null;
   currency: { code: string; symbol: string } | null;
 }
 
@@ -44,7 +44,7 @@ export default function CalendarView() {
     setLoading(true);
     supabase
       .from('transactions')
-      .select('date, direction, amount, concepto, comercio, category:category_id(name,icon), currency:currency_id(code,symbol)')
+      .select('date, direction, amount, concepto, comercio, category:category_id(name,category_type), currency:currency_id(code,symbol)')
       .eq('user_id', user.id)
       .gte('date', start)
       .lte('date', end)
@@ -195,7 +195,7 @@ export default function CalendarView() {
               {selectedTxs.map((t, i) => (
                 <li key={i} className="flex items-center justify-between px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <span className="text-lg">{t.category?.icon ?? (t.direction === 'ingreso' ? '💰' : '💸')}</span>
+                    <span className="text-lg">{t.direction === 'ingreso' ? '💰' : '💸'}</span>
                     <div>
                       <p className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-tight">
                         {t.concepto || t.comercio || t.category?.name || 'Sin descripción'}

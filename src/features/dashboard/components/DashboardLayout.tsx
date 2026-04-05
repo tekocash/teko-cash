@@ -4,7 +4,7 @@ import { useAuthStore } from '@/store/auth-store';
 import {
   Menu, X, User, Bell, Settings, LogOut, ChevronDown,
   Home, Users, DollarSign, PieChart, Plus, Tag, CreditCard, Database,
-  AlertTriangle, TrendingUp, CheckCircle, CalendarDays,
+  AlertTriangle, TrendingUp, CheckCircle, CalendarDays, BookOpen,
 } from 'lucide-react';
 import { PENDING_NOTIFS_KEY, PendingNotif } from '@/features/budgets/hooks/useBudgets';
 
@@ -175,6 +175,17 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             })}
           </ul>
         </nav>
+
+        {/* Tutorial link */}
+        <div className="px-4 pb-2">
+          <Link
+            to="/tutorial"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+          >
+            <BookOpen size={15} />
+            Guía de uso
+          </Link>
+        </div>
 
         {/* Información de usuario en el sidebar */}
         <div className="absolute bottom-0 w-full p-4 border-t dark:border-gray-700">
