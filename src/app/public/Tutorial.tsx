@@ -144,7 +144,7 @@ const FAQS: FAQ[] = [
   },
   {
     q: '¿Mis datos financieros están seguros?',
-    a: 'Tus datos se almacenan en Supabase con Row Level Security — es técnicamente imposible que otro usuario acceda a tus datos. Las conexiones usan HTTPS/TLS y las contraseñas se guardan hasheadas con bcrypt.',
+    a: 'Si decidiste usar nuestra opción gratuita publicada en lugar de instalación local, guardamos tus datos en nuestra cuenta de Supabase con Row Level Security. Recomendamos instalación propia para un control inclusive mayor.',
   },
   {
     q: '¿Puedo usar Teko Cash sin conexión a internet?',

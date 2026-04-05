@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth-store';
-import { supabase } from '@/lib/supabase/client';
+import { supabase, CUSTOM_CONN_KEY, hasCustomConnection } from '@/lib/supabase/client';
 import { toast } from 'react-hot-toast';
 import {
   User, Shield, CreditCard, Bell, Save, Plus, X, Trash2,
   Eye, EyeOff, CheckCircle2, Smartphone, Mail, Calendar,
   AlertTriangle, TrendingUp, Info, Database, Download, Upload,
-  FileJson, FileSpreadsheet, AlertCircle, ChevronDown,
+  FileJson, FileSpreadsheet, AlertCircle, ChevronDown, Server, Link2, RefreshCw,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -47,6 +47,7 @@ const TABS = [
   { id: 'payment', label: 'Métodos de pago', icon: CreditCard },
   { id: 'notifications', label: 'Notificaciones', icon: Bell },
   { id: 'data', label: 'Mis datos', icon: Database },
+  { id: 'connection', label: 'Conexión', icon: Server },
 ];
 
 interface PaymentMethod {
@@ -229,6 +230,44 @@ export default function SettingsPage() {
     if (error) { toast.error('Error al eliminar'); return; }
     toast.success('Método eliminado');
     loadPMs();
+  };
+
+  // ── Custom connection state ──────────────────────────────────────────────
+  const [connForm, setConnForm] = useState({ url: '', key: '' });
+  const [connHasCustom, setConnHasCustom] = useState(hasCustomConnection);
+  const [connTesting, setConnTesting] = useState(false);
+  const [connTestResult, setConnTestResult] = useState<'ok' | 'error' | null>(null);
+
+  const handleTestConnection = async () => {
+    if (!connForm.url || !connForm.key) return;
+    setConnTesting(true);
+    setConnTestResult(null);
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const testClient = createClient(connForm.url.trim(), connForm.key.trim());
+      const { error } = await testClient.from('currencies').select('id').limit(1);
+      setConnTestResult(error ? 'error' : 'ok');
+    } catch {
+      setConnTestResult('error');
+    } finally {
+      setConnTesting(false);
+    }
+  };
+
+  const handleSaveConnection = () => {
+    localStorage.setItem(CUSTOM_CONN_KEY, JSON.stringify({ url: connForm.url.trim(), key: connForm.key.trim() }));
+    setConnHasCustom(true);
+    toast.success('Conexión guardada — recargando…');
+    setTimeout(() => window.location.reload(), 1200);
+  };
+
+  const handleClearConnection = () => {
+    localStorage.removeItem(CUSTOM_CONN_KEY);
+    setConnHasCustom(false);
+    setConnForm({ url: '', key: '' });
+    setConnTestResult(null);
+    toast.success('Volviendo al servidor compartido — recargando…');
+    setTimeout(() => window.location.reload(), 1200);
   };
 
   // Data export/import state
@@ -1315,6 +1354,120 @@ export default function SettingsPage() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Connection tab */}
+        {activeTab === 'connection' && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-base font-semibold text-gray-800 dark:text-gray-200 mb-1">Conexión a Supabase</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Por defecto Teko Cash usa el servidor compartido. Si instalaste tu propia instancia de Supabase
+                podés conectar tu cuenta aquí — tus datos quedan 100% en tu infraestructura.
+              </p>
+            </div>
+
+            {/* Current status */}
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium border ${
+              connHasCustom
+                ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
+                : 'bg-gray-50 dark:bg-gray-700/40 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400'
+            }`}>
+              <Server size={16} className="shrink-0" />
+              {connHasCustom ? 'Usando conexión personalizada (self-hosted)' : 'Usando servidor compartido de Teko Cash'}
+            </div>
+
+            {/* Form */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                  URL del proyecto Supabase
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://xxxxxxxxxxxx.supabase.co"
+                  value={connForm.url}
+                  onChange={e => setConnForm(f => ({ ...f, url: e.target.value }))}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                  Anon/Public Key
+                </label>
+                <input
+                  type="password"
+                  placeholder="eyJhbGci..."
+                  value={connForm.key}
+                  onChange={e => setConnForm(f => ({ ...f, key: e.target.value }))}
+                  className={inputCls}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Encontrala en tu proyecto → Settings → API → Project API keys → <em>anon public</em>
+                </p>
+              </div>
+
+              {/* Test result */}
+              {connTestResult && (
+                <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
+                  connTestResult === 'ok'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                }`}>
+                  {connTestResult === 'ok'
+                    ? <><CheckCircle2 size={14} /> Conexión exitosa</>
+                    : <><AlertCircle size={14} /> No se pudo conectar — verificá la URL y la key</>}
+                </div>
+              )}
+
+              <div className="flex gap-3 flex-wrap">
+                <button
+                  onClick={handleTestConnection}
+                  disabled={!connForm.url || !connForm.key || connTesting}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-gray-600 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
+                >
+                  <RefreshCw size={14} className={connTesting ? 'animate-spin' : ''} />
+                  {connTesting ? 'Probando…' : 'Probar conexión'}
+                </button>
+                <button
+                  onClick={handleSaveConnection}
+                  disabled={!connForm.url || !connForm.key || connTestResult !== 'ok'}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-medium transition-colors"
+                >
+                  <Save size={14} />
+                  Guardar y recargar
+                </button>
+              </div>
+            </div>
+
+            {/* Clear custom */}
+            {connHasCustom && (
+              <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
+                <button
+                  onClick={handleClearConnection}
+                  className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+                >
+                  <Link2 size={14} />
+                  Volver al servidor compartido
+                </button>
+              </div>
+            )}
+
+            {/* Self-hosting guide link */}
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 p-4 text-sm text-gray-600 dark:text-gray-400 space-y-1">
+              <p className="font-medium text-gray-700 dark:text-gray-300">¿Cómo instalar tu propia instancia?</p>
+              <p>Seguí la guía en el README del repositorio — sección <em>Self-hosting</em>.</p>
+              <a
+                href="https://github.com/tekocash/teko-cash#self-hosting"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+              >
+                <Link2 size={12} />
+                Ver guía de instalación
+              </a>
+            </div>
           </div>
         )}
 
